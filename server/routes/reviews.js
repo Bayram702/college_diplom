@@ -1,0 +1,235 @@
+const express = require('express');
+const jwt = require('jsonwebtoken');
+const db = require('../db');
+const { moderateReviewText } = require('../utils/reviewModeration');
+
+const router = express.Router();
+
+const requireAuth = (req, res, next) => {
+  try {
+    const token = req.headers.authorization?.split(' ')[1];
+    if (!token) {
+      return res.status(401).json({ success: false, error: 'Требуется авторизация' });
+    }
+
+    req.user = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
+    return next();
+  } catch {
+    return res.status(401).json({ success: false, error: 'Недействительный токен' });
+  }
+};
+
+const requireApplicant = (req, res, next) => {
+  if (req.user?.roleName !== 'applicant') {
+    return res.status(403).json({ success: false, error: 'Отзывы могут оставлять только абитуриенты' });
+  }
+
+  return next();
+};
+
+const parsePositiveId = (value) => {
+  const id = Number(value);
+  if (!Number.isInteger(id) || id <= 0) return null;
+  return id;
+};
+
+const parseRating = (value) => {
+  const rating = Number(value);
+  if (!Number.isInteger(rating) || rating < 1 || rating > 5) return null;
+  return rating;
+};
+
+const buildSummary = (rows) => {
+  const total = rows.reduce((sum, item) => sum + Number(item.count), 0);
+  const average = total
+    ? rows.reduce((sum, item) => sum + Number(item.rating) * Number(item.count), 0) / total
+    : 0;
+
+  const distribution = [5, 4, 3, 2, 1].map((rating) => {
+    const row = rows.find((item) => Number(item.rating) === rating);
+    return {
+      rating,
+      count: row ? Number(row.count) : 0
+    };
+  });
+
+  return {
+    total,
+    average: Number(average.toFixed(1)),
+    distribution
+  };
+};
+
+router.get('/college/:collegeId', async (req, res) => {
+  try {
+    const collegeId = parsePositiveId(req.params.collegeId);
+    if (!collegeId) {
+      return res.status(400).json({ success: false, error: 'Некорректный колледж' });
+    }
+
+    const collegeResult = await db.query(
+      "SELECT id FROM colleges WHERE id = $1 AND status = 'active' LIMIT 1",
+      [collegeId]
+    );
+
+    if (collegeResult.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Колледж не найден' });
+    }
+
+    const [reviewsResult, summaryResult] = await Promise.all([
+      db.query(
+        `
+        SELECT
+          cr.id,
+          cr.rating,
+          cr.text,
+          cr.created_at,
+          cr.updated_at,
+          u.name AS author_name
+        FROM college_reviews cr
+        JOIN users u ON u.id = cr.user_id
+        WHERE cr.college_id = $1
+          AND cr.status = 'published'
+        ORDER BY cr.created_at DESC
+        `,
+        [collegeId]
+      ),
+      db.query(
+        `
+        SELECT rating, COUNT(*)::int AS count
+        FROM college_reviews
+        WHERE college_id = $1
+          AND status = 'published'
+        GROUP BY rating
+        `,
+        [collegeId]
+      )
+    ]);
+
+    return res.json({
+      success: true,
+      data: {
+        reviews: reviewsResult.rows,
+        summary: buildSummary(summaryResult.rows)
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching college reviews:', error);
+    return res.status(500).json({ success: false, error: 'Ошибка сервера' });
+  }
+});
+
+router.post('/college/:collegeId', requireAuth, requireApplicant, async (req, res) => {
+  try {
+    const collegeId = parsePositiveId(req.params.collegeId);
+    const rating = parseRating(req.body.rating);
+    const moderation = moderateReviewText(req.body.text);
+
+    if (!collegeId) {
+      return res.status(400).json({ success: false, error: 'Некорректный колледж' });
+    }
+
+    if (!rating) {
+      return res.status(400).json({ success: false, error: 'Оценка должна быть от 1 до 5 звезд' });
+    }
+
+    if (!moderation.ok) {
+      return res.status(400).json({ success: false, error: moderation.reason });
+    }
+
+    const collegeResult = await db.query(
+      "SELECT id FROM colleges WHERE id = $1 AND status = 'active' LIMIT 1",
+      [collegeId]
+    );
+
+    if (collegeResult.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Колледж не найден' });
+    }
+
+    const result = await db.query(
+      `
+      INSERT INTO college_reviews (college_id, user_id, rating, text)
+      VALUES ($1, $2, $3, $4)
+      RETURNING id, college_id, user_id, rating, text, created_at, updated_at
+      `,
+      [collegeId, req.user.userId, rating, moderation.text]
+    );
+
+    return res.status(201).json({
+      success: true,
+      message: 'Отзыв опубликован',
+      data: result.rows[0]
+    });
+  } catch (error) {
+    console.error('Error creating college review:', error);
+
+    if (error.code === '23505') {
+      return res.status(400).json({
+        success: false,
+        error: 'Вы уже оставили отзыв на этот колледж. Удалите старый отзыв в личном кабинете, чтобы написать новый.'
+      });
+    }
+
+    return res.status(500).json({ success: false, error: 'Ошибка сервера' });
+  }
+});
+
+router.get('/my', requireAuth, requireApplicant, async (req, res) => {
+  try {
+    const result = await db.query(
+      `
+      SELECT
+        cr.id,
+        cr.college_id,
+        cr.rating,
+        cr.text,
+        cr.created_at,
+        cr.updated_at,
+        c.name AS college_name,
+        ci.name AS city_name
+      FROM college_reviews cr
+      JOIN colleges c ON c.id = cr.college_id
+      LEFT JOIN cities ci ON ci.id = c.city_id
+      WHERE cr.user_id = $1
+        AND cr.status = 'published'
+      ORDER BY cr.created_at DESC
+      `,
+      [req.user.userId]
+    );
+
+    return res.json({ success: true, data: result.rows });
+  } catch (error) {
+    console.error('Error fetching user reviews:', error);
+    return res.status(500).json({ success: false, error: 'Ошибка сервера' });
+  }
+});
+
+router.delete('/:id', requireAuth, requireApplicant, async (req, res) => {
+  try {
+    const reviewId = parsePositiveId(req.params.id);
+    if (!reviewId) {
+      return res.status(400).json({ success: false, error: 'Некорректный отзыв' });
+    }
+
+    const result = await db.query(
+      `
+      DELETE FROM college_reviews
+      WHERE id = $1
+        AND user_id = $2
+      RETURNING id
+      `,
+      [reviewId, req.user.userId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Отзыв не найден' });
+    }
+
+    return res.json({ success: true, message: 'Отзыв удален' });
+  } catch (error) {
+    console.error('Error deleting review:', error);
+    return res.status(500).json({ success: false, error: 'Ошибка сервера' });
+  }
+});
+
+module.exports = router;
