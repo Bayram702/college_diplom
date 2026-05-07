@@ -46,6 +46,30 @@ router.get('/', async (req, res) => {
           FROM college_reviews cr
           WHERE cr.college_id = c.id AND cr.status = 'published'
         ) as review_count,
+        COALESCE((
+          SELECT SUM(cs.budget_places)::int
+          FROM college_specialties cs
+          JOIN specialties s ON s.id = cs.specialty_id
+          WHERE cs.college_id = c.id
+            AND cs.is_active = true
+            AND s.status = 'active'
+        ), 0) as calculated_budget_places,
+        COALESCE((
+          SELECT SUM(cs.commercial_places)::int
+          FROM college_specialties cs
+          JOIN specialties s ON s.id = cs.specialty_id
+          WHERE cs.college_id = c.id
+            AND cs.is_active = true
+            AND s.status = 'active'
+        ), 0) as calculated_commercial_places,
+        (
+          SELECT COUNT(*)::int
+          FROM college_specialties cs
+          JOIN specialties s ON s.id = cs.specialty_id
+          WHERE cs.college_id = c.id
+            AND cs.is_active = true
+            AND s.status = 'active'
+        ) as specialties_count,
         (
           SELECT json_agg(json_build_object('id', s.id, 'name', s.name, 'code', s.code))
           FROM college_specialties cs
@@ -155,8 +179,9 @@ router.get('/', async (req, res) => {
       description: row.description,
       city: row.city_name || 'Город не указан',
       cityCode: city || 'unknown',
-      budget_places: row.budget_places,
-      commercial_places: row.commercial_places,
+      budget_places: Number(row.calculated_budget_places || 0),
+      commercial_places: Number(row.calculated_commercial_places || 0),
+      specialties_count: Number(row.specialties_count || 0),
       avg_score: row.avg_score,
       min_score: row.min_score,
       review_average: Number(row.review_average || 0),
@@ -208,7 +233,25 @@ router.get('/my', async (req, res) => {
     }
 
     const query = `
-      SELECT c.*, ci.name as city_name
+      SELECT
+        c.*,
+        ci.name as city_name,
+        COALESCE((
+          SELECT SUM(cs.budget_places)::int
+          FROM college_specialties cs
+          JOIN specialties s ON s.id = cs.specialty_id
+          WHERE cs.college_id = c.id
+            AND cs.is_active = true
+            AND s.status = 'active'
+        ), 0) as calculated_budget_places,
+        COALESCE((
+          SELECT SUM(cs.commercial_places)::int
+          FROM college_specialties cs
+          JOIN specialties s ON s.id = cs.specialty_id
+          WHERE cs.college_id = c.id
+            AND cs.is_active = true
+            AND s.status = 'active'
+        ), 0) as calculated_commercial_places
       FROM colleges c
       LEFT JOIN cities ci ON c.city_id = ci.id
       WHERE c.id = $1 AND c.status = 'active'
@@ -217,7 +260,11 @@ router.get('/my', async (req, res) => {
     console.log('🏫 Rows:', result.rows.length)
     if (result.rows.length === 0) return res.status(404).json({ success: false, error: 'Колледж не найден' })
 
-    res.json({ success: true, data: result.rows[0] })
+    const college = result.rows[0]
+    college.budget_places = Number(college.calculated_budget_places || 0)
+    college.commercial_places = Number(college.calculated_commercial_places || 0)
+
+    res.json({ success: true, data: college })
   } catch (error) {
     console.error('❌ Error fetching my college:', error)
     res.status(500).json({ success: false, error: 'Ошибка сервера: ' + error.message })
@@ -242,7 +289,7 @@ router.put('/my', async (req, res) => {
     if (!collegeId) return res.status(404).json({ success: false, error: 'Колледж не привязан' })
 
     const { name, description, phone, email, website, admission_url, status, social_vk, social_max, social_other,
-            budget_places, commercial_places, avg_score, min_score, is_professionalitet, professionalitet_cluster,
+            avg_score, min_score, is_professionalitet, professionalitet_cluster,
             logo_image_url, opportunities, employers, workshops, professions, ovz_programs } = req.body
 
     const updates = []
@@ -251,7 +298,7 @@ router.put('/my', async (req, res) => {
 
     const fields = {
       name, description, phone, email, website, admission_url, status, social_vk, social_max, social_other,
-      budget_places, commercial_places, avg_score, min_score, is_professionalitet, professionalitet_cluster,
+      avg_score, min_score, is_professionalitet, professionalitet_cluster,
       logo_image_url, opportunities, employers, workshops, professions, ovz_programs
     }
 
@@ -360,8 +407,24 @@ router.get('/stats', async (req, res) => {
       SELECT
         COUNT(*) FILTER (WHERE status = 'active') as active_colleges,
         COUNT(*) FILTER (WHERE is_professionalitet = true) as professionalitet_colleges,
-        COALESCE(SUM(budget_places), 0) as total_budget_places,
-        COALESCE(SUM(commercial_places), 0) as total_commercial_places,
+        COALESCE((
+          SELECT SUM(cs.budget_places)::int
+          FROM college_specialties cs
+          JOIN specialties s ON s.id = cs.specialty_id
+          JOIN colleges c ON c.id = cs.college_id
+          WHERE cs.is_active = true
+            AND s.status = 'active'
+            AND c.status = 'active'
+        ), 0) as total_budget_places,
+        COALESCE((
+          SELECT SUM(cs.commercial_places)::int
+          FROM college_specialties cs
+          JOIN specialties s ON s.id = cs.specialty_id
+          JOIN colleges c ON c.id = cs.college_id
+          WHERE cs.is_active = true
+            AND s.status = 'active'
+            AND c.status = 'active'
+        ), 0) as total_commercial_places,
         COALESCE(ROUND(AVG(avg_score), 1), 0) as avg_score
       FROM colleges
     `);

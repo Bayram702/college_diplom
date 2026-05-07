@@ -99,26 +99,16 @@
           <h2 class="section-title"><i class="fas fa-chart-bar"></i> Статистика приема 2025</h2>
           
           <div class="stats-grid">
-            <div class="form-group">
-              <label for="budget-places">Бюджетных мест</label>
-              <input 
-                v-model.number="collegeData.budget_places" 
-                type="number" 
-                id="budget-places" 
-                class="form-control" 
-                min="0"
-              >
+            <div class="calculated-places-card">
+              <span>Бюджетных мест</span>
+              <strong>{{ calculatedCollegePlaces.budget }}</strong>
+              <small>Сумма по активным специальностям</small>
             </div>
             
-            <div class="form-group">
-              <label for="commercial-places">Коммерческих мест</label>
-              <input 
-                v-model.number="collegeData.commercial_places" 
-                type="number" 
-                id="commercial-places" 
-                class="form-control" 
-                min="0"
-              >
+            <div class="calculated-places-card">
+              <span>Коммерческих мест</span>
+              <strong>{{ calculatedCollegePlaces.commercial }}</strong>
+              <small>Сумма по активным специальностям</small>
             </div>
             
             <div class="form-group">
@@ -509,7 +499,7 @@
                 id="applications-status-filter"
                 v-model="applicationsFilters.status"
                 class="form-control"
-                @change="fetchApplications"
+                @change="onApplicationsFilterChange"
               >
                 <option value="all">Все</option>
                 <option value="pending">В ожидании</option>
@@ -525,12 +515,26 @@
                 id="applications-specialty-filter"
                 v-model="applicationsFilters.specialtyId"
                 class="form-control"
-                @change="fetchApplications"
+                @change="onApplicationsFilterChange"
               >
                 <option value="all">Все специальности</option>
                 <option v-for="speciality in specialities" :key="speciality.id" :value="String(speciality.id)">
                   {{ speciality.code }} — {{ speciality.name }}
                 </option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label for="applications-score-sort">Сортировка по баллу</label>
+              <select
+                id="applications-score-sort"
+                v-model="applicationsFilters.sortScore"
+                class="form-control"
+                @change="onApplicationsFilterChange"
+              >
+                <option value="none">По статусу и дате</option>
+                <option value="desc">Сначала высокий балл</option>
+                <option value="asc">Сначала низкий балл</option>
               </select>
             </div>
           </div>
@@ -585,14 +589,6 @@
                     >
                       <i class="fas fa-check"></i>
                     </button>
-                    <button
-                      class="btn-action btn-reject"
-                      :disabled="application.status === 'rejected' || application.status === 'cancelled'"
-                      @click="updateApplicationStatus(application.id, 'rejected')"
-                      title="Отклонить"
-                    >
-                      <i class="fas fa-times"></i>
-                    </button>
                   </div>
                 </td>
               </tr>
@@ -604,6 +600,28 @@
           <i class="fas fa-inbox"></i>
           <p>Заявки не найдены</p>
         </div>
+
+        <div v-if="!applicationsLoading && applicationsPagination.totalPages > 1" class="pagination">
+          <button
+            type="button"
+            class="btn btn-secondary"
+            :disabled="applicationsPagination.page <= 1"
+            @click="goToApplicationsPage(applicationsPagination.page - 1)"
+          >
+            Назад
+          </button>
+          <span>
+            Страница {{ applicationsPagination.page }} из {{ applicationsPagination.totalPages }}
+          </span>
+          <button
+            type="button"
+            class="btn btn-secondary"
+            :disabled="applicationsPagination.page >= applicationsPagination.totalPages"
+            @click="goToApplicationsPage(applicationsPagination.page + 1)"
+          >
+            Далее
+          </button>
+        </div>
       </div>
 
       <!-- Контент вкладки 4: Аналитика заявок -->
@@ -612,6 +630,25 @@
           <i class="fas fa-chart-line"></i>
           <div>
             <strong>Аналитика:</strong> Сводка по заявкам вашего колледжа, динамика и распределение по специальностям.
+          </div>
+        </div>
+
+        <div class="applications-toolbar analytics-filter-toolbar">
+          <div class="applications-filters">
+            <div class="form-group">
+              <label for="analytics-specialty-filter">Специальность для аналитики</label>
+              <select
+                id="analytics-specialty-filter"
+                v-model="analyticsFilters.specialtyId"
+                class="form-control"
+                @change="fetchApplicationsAnalytics"
+              >
+                <option value="all">Все специальности</option>
+                <option v-for="speciality in specialities" :key="speciality.id" :value="String(speciality.id)">
+                  {{ speciality.code }} — {{ speciality.name }}
+                </option>
+              </select>
+            </div>
           </div>
         </div>
 
@@ -914,6 +951,16 @@ const applicationsLoading = ref(false)
 const pendingApplicationsCount = ref(0)
 const applicationsFilters = ref({
   status: 'all',
+  specialtyId: 'all',
+  sortScore: 'none'
+})
+const applicationsPagination = ref({
+  total: 0,
+  page: 1,
+  limit: 20,
+  totalPages: 1
+})
+const analyticsFilters = ref({
   specialtyId: 'all'
 })
 
@@ -961,6 +1008,16 @@ const socialOtherText = computed({
 })
 
 const filteredSpecialities = computed(() => specialities.value)
+
+const calculatedCollegePlaces = computed(() => {
+  return specialities.value.reduce((totals, speciality) => {
+    if (speciality.status !== 'active') return totals
+
+    totals.budget += Number(speciality.budget_places || 0)
+    totals.commercial += Number(speciality.commercial_places || 0)
+    return totals
+  }, { budget: 0, commercial: 0 })
+})
 
 const getToken = () => localStorage.getItem('authToken')
 
@@ -1080,8 +1137,6 @@ const saveCollegeData = async () => {
       social_vk: collegeData.value.social_vk,
       social_max: collegeData.value.social_max,
       social_other: collegeData.value.social_other,
-      budget_places: collegeData.value.budget_places,
-      commercial_places: collegeData.value.commercial_places,
       avg_score: collegeData.value.avg_score,
       min_score: collegeData.value.min_score,
       is_professionalitet: collegeData.value.is_professionalitet,
@@ -1325,6 +1380,8 @@ const fetchApplications = async () => {
   try {
     const token = getToken()
     const params = new URLSearchParams()
+    params.append('page', String(applicationsPagination.value.page))
+    params.append('limit', String(applicationsPagination.value.limit))
 
     if (applicationsFilters.value.status !== 'all') {
       params.append('status', applicationsFilters.value.status)
@@ -1332,6 +1389,10 @@ const fetchApplications = async () => {
 
     if (applicationsFilters.value.specialtyId !== 'all') {
       params.append('specialtyId', applicationsFilters.value.specialtyId)
+    }
+
+    if (applicationsFilters.value.sortScore !== 'none') {
+      params.append('sortScore', applicationsFilters.value.sortScore)
     }
 
     const query = params.toString() ? `?${params.toString()}` : ''
@@ -1344,6 +1405,10 @@ const fetchApplications = async () => {
     if (!result.success) throw new Error(result.error)
 
     applications.value = result.data
+    applicationsPagination.value = {
+      ...applicationsPagination.value,
+      ...(result.pagination || {})
+    }
   } catch (error) {
     showAlert('Ошибка загрузки заявок: ' + error.message, 'error')
   } finally {
@@ -1351,10 +1416,25 @@ const fetchApplications = async () => {
   }
 }
 
+const onApplicationsFilterChange = () => {
+  applicationsPagination.value.page = 1
+  fetchApplications()
+}
+
+const goToApplicationsPage = (page) => {
+  applicationsPagination.value.page = page
+  fetchApplications()
+}
+
 const fetchApplicationsAnalytics = async () => {
   try {
     const token = getToken()
-    const res = await fetch(`${API_URL}/applications/college/analytics`, {
+    const params = new URLSearchParams()
+    if (analyticsFilters.value.specialtyId !== 'all') {
+      params.append('specialtyId', analyticsFilters.value.specialtyId)
+    }
+    const query = params.toString() ? `?${params.toString()}` : ''
+    const res = await fetch(`${API_URL}/applications/college/analytics${query}`, {
       headers: { 'Authorization': `Bearer ${token}` }
     })
 
@@ -1373,7 +1453,7 @@ const fetchPendingApplicationsCount = async () => {
     const token = getToken()
     if (!token) return
 
-    const res = await fetch(`${API_URL}/applications/college?status=pending`, {
+    const res = await fetch(`${API_URL}/applications/college?status=pending&limit=1`, {
       headers: { 'Authorization': `Bearer ${token}` }
     })
 
@@ -1381,7 +1461,7 @@ const fetchPendingApplicationsCount = async () => {
     const result = await res.json()
     if (!result.success) throw new Error(result.error)
 
-    pendingApplicationsCount.value = Array.isArray(result.data) ? result.data.length : 0
+    pendingApplicationsCount.value = result.pagination?.total ?? (Array.isArray(result.data) ? result.data.length : 0)
   } catch (error) {
     console.warn('Не удалось загрузить количество ожидающих заявок:', error)
   }
@@ -1484,6 +1564,41 @@ onMounted(() => {
 </script>
 
 <style scoped>
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+}
+
+.calculated-places-card {
+  min-height: 86px;
+  border: 1px solid #dbeafe;
+  border-radius: 12px;
+  padding: 14px 16px;
+  background: linear-gradient(135deg, rgba(0, 84, 166, 0.08), rgba(0, 166, 81, 0.1));
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+}
+
+.calculated-places-card span {
+  color: #475569;
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+
+.calculated-places-card strong {
+  color: #0054a6;
+  font-size: 1.65rem;
+  line-height: 1;
+}
+
+.calculated-places-card small {
+  color: #64748b;
+  font-weight: 600;
+}
+
 .loading-state {
   text-align: center;
   padding: 48px 20px;
@@ -1584,8 +1699,22 @@ onMounted(() => {
 
 .applications-filters {
   display: grid;
-  grid-template-columns: repeat(2, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 14px;
+}
+
+.analytics-filter-toolbar {
+  margin-top: 16px;
+}
+
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  margin-top: 18px;
+  font-weight: 700;
+  color: #1e293b;
 }
 
 .applications-analytics {

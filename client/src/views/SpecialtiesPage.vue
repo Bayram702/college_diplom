@@ -266,8 +266,7 @@ const pagination = ref({
 const stats = ref([
   { id: 1, value: '—', label: 'Специальностей СПО' },
   { id: 2, value: '—', label: 'Колледжей и техникумов' },
-  { id: 3, value: '—', label: 'Средний балл по всем специальностям' },
-  { id: 4, value: '—', label: 'Трудоустройство выпускников' }
+  { id: 3, value: '—', label: 'Средний балл по всем специальностям' }
 ])
 
 const getToken = () => localStorage.getItem('authToken')
@@ -340,8 +339,7 @@ const loadStats = async () => {
       stats.value = [
         { id: 1, value: specStats.total_specialties || '—', label: 'Специальностей СПО' },
         { id: 2, value: colleges.active_colleges || '—', label: 'Колледжей и техникумов' },
-        { id: 3, value: specStats.avg_score_last_year || '—', label: 'Средний балл по всем специальностям' },
-        { id: 4, value: '—', label: 'Трудоустройство выпускников' } // Нет в БД
+        { id: 3, value: specStats.avg_score_last_year || '—', label: 'Средний балл по всем специальностям' }
       ]
     }
   } catch (error) {

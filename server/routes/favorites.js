@@ -60,6 +60,43 @@ router.get('/', requireAuth, requireApplicant, async (req, res) => {
         c.short_name,
         c.description,
         c.logo_image_url,
+        COALESCE((
+          SELECT SUM(cs.budget_places)::int
+          FROM college_specialties cs
+          JOIN specialties s ON s.id = cs.specialty_id
+          WHERE cs.college_id = c.id
+            AND cs.is_active = true
+            AND s.status = 'active'
+        ), 0) AS budget_places,
+        COALESCE((
+          SELECT SUM(cs.commercial_places)::int
+          FROM college_specialties cs
+          JOIN specialties s ON s.id = cs.specialty_id
+          WHERE cs.college_id = c.id
+            AND cs.is_active = true
+            AND s.status = 'active'
+        ), 0) AS commercial_places,
+        (
+          SELECT COUNT(*)::int
+          FROM college_specialties cs
+          JOIN specialties s ON s.id = cs.specialty_id
+          WHERE cs.college_id = c.id
+            AND cs.is_active = true
+            AND s.status = 'active'
+        ) AS specialties_count,
+        c.avg_score,
+        c.min_score,
+        c.is_professionalitet,
+        COALESCE((
+          SELECT ROUND(AVG(cr.rating)::numeric, 1)
+          FROM college_reviews cr
+          WHERE cr.college_id = c.id AND cr.status = 'published'
+        ), 0) AS review_average,
+        (
+          SELECT COUNT(*)::int
+          FROM college_reviews cr
+          WHERE cr.college_id = c.id AND cr.status = 'published'
+        ) AS review_count,
         ci.name AS city_name
       FROM favorites f
       JOIN colleges c ON c.id = f.entity_id
@@ -81,6 +118,10 @@ router.get('/', requireAuth, requireApplicant, async (req, res) => {
         s.code,
         s.name,
         s.description,
+        s.qualification,
+        s.duration,
+        s.base_education,
+        s.form,
         s.avg_score_last_year
       FROM favorites f
       JOIN specialties s ON s.id = f.entity_id

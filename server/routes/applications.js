@@ -6,7 +6,26 @@ const router = express.Router();
 
 const MAX_APPLICATIONS_PER_APPLICANT = 5;
 const ALLOWED_APPLICATION_STATUSES = ['pending', 'accepted', 'rejected', 'cancelled'];
-const ALLOWED_DECISION_STATUSES = ['accepted', 'rejected'];
+const ALLOWED_DECISION_STATUSES = ['accepted'];
+
+const normalizeRepresentativeRejectedApplications = async (collegeId) => {
+  await db.query(
+    `
+    UPDATE applications a
+    SET status = 'pending',
+        decided_at = NULL,
+        decided_by = NULL,
+        updated_at = CURRENT_TIMESTAMP
+    FROM users u
+    JOIN roles r ON r.id = u.role_id
+    WHERE a.decided_by = u.id
+      AND r.name = 'college_rep'
+      AND a.college_id = $1
+      AND a.status = 'rejected'
+    `,
+    [collegeId]
+  );
+};
 
 const requireAuth = (req, res, next) => {
   try {
@@ -301,11 +320,16 @@ router.get('/my', requireAuth, requireRole(['applicant']), async (req, res) => {
 router.get('/college', requireAuth, requireRole(['college_rep']), async (req, res) => {
   try {
     const collegeId = req.user.collegeId;
-    const { status, specialtyId } = req.query;
+    const { status, specialtyId, sortScore = 'none' } = req.query;
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(20, Math.max(1, parseInt(req.query.limit, 10) || 20));
+    const offset = (page - 1) * limit;
 
     if (!collegeId) {
       return res.status(400).json({ success: false, error: 'Колледж не привязан к пользователю' });
     }
+
+    await normalizeRepresentativeRejectedApplications(collegeId);
 
     const conditions = ['a.college_id = $1'];
     const params = [collegeId];
@@ -332,6 +356,26 @@ router.get('/college', requireAuth, requireRole(['college_rep']), async (req, re
       paramIndex += 1;
     }
 
+    const orderBy = sortScore === 'asc'
+      ? 'a.avg_score ASC, a.created_at DESC'
+      : sortScore === 'desc'
+        ? 'a.avg_score DESC, a.created_at DESC'
+        : `CASE a.status
+            WHEN 'pending' THEN 0
+            WHEN 'accepted' THEN 1
+            ELSE 2
+          END,
+          a.created_at DESC`;
+
+    const countResult = await db.query(
+      `
+      SELECT COUNT(*)::int AS total
+      FROM applications a
+      WHERE ${conditions.join(' AND ')}
+      `,
+      params
+    );
+
     const query = `
       SELECT
         a.id,
@@ -355,18 +399,23 @@ router.get('/college', requireAuth, requireRole(['college_rep']), async (req, re
       JOIN specialties s ON s.id = a.specialty_id
       LEFT JOIN users u ON u.id = a.decided_by
       WHERE ${conditions.join(' AND ')}
-      ORDER BY
-        CASE a.status
-          WHEN 'pending' THEN 0
-          WHEN 'accepted' THEN 1
-          ELSE 2
-        END,
-        a.created_at DESC
+      ORDER BY ${orderBy}
+      LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
     `;
 
-    const result = await db.query(query, params);
+    const result = await db.query(query, [...params, limit, offset]);
+    const total = countResult.rows[0]?.total || 0;
 
-    return res.json({ success: true, data: result.rows });
+    return res.json({
+      success: true,
+      data: result.rows,
+      pagination: {
+        total,
+        page,
+        limit,
+        totalPages: Math.max(1, Math.ceil(total / limit))
+      }
+    });
   } catch (error) {
     console.error('Error fetching college applications:', error);
     return res.status(500).json({ success: false, error: 'Ошибка сервера' });
@@ -376,9 +425,27 @@ router.get('/college', requireAuth, requireRole(['college_rep']), async (req, re
 router.get('/college/analytics', requireAuth, requireRole(['college_rep']), async (req, res) => {
   try {
     const collegeId = req.user.collegeId;
+    const { specialtyId } = req.query;
 
     if (!collegeId) {
       return res.status(400).json({ success: false, error: 'Колледж не привязан к пользователю' });
+    }
+
+    await normalizeRepresentativeRejectedApplications(collegeId);
+
+    const analyticsParams = [collegeId];
+    const analyticsConditions = ['college_id = $1'];
+    const analyticsAliasConditions = ['a.college_id = $1'];
+
+    if (specialtyId && specialtyId !== 'all') {
+      const parsedSpecialtyId = Number(specialtyId);
+      if (!Number.isInteger(parsedSpecialtyId) || parsedSpecialtyId <= 0) {
+        return res.status(400).json({ success: false, error: 'РќРµРєРѕСЂСЂРµРєС‚РЅР°СЏ СЃРїРµС†РёР°Р»СЊРЅРѕСЃС‚СЊ' });
+      }
+
+      analyticsParams.push(parsedSpecialtyId);
+      analyticsConditions.push('specialty_id = $2');
+      analyticsAliasConditions.push('a.specialty_id = $2');
     }
 
     const [summaryResult, specialtyResult, dailyResult] = await Promise.all([
@@ -393,9 +460,9 @@ router.get('/college/analytics', requireAuth, requireRole(['college_rep']), asyn
           COALESCE(ROUND(AVG(avg_score)::numeric, 2), 0)::numeric AS avg_score,
           COUNT(*) FILTER (WHERE needs_dormitory = true)::int AS dormitory
         FROM applications
-        WHERE college_id = $1
+        WHERE ${analyticsConditions.join(' AND ')}
         `,
-        [collegeId]
+        analyticsParams
       ),
       db.query(
         `
@@ -411,11 +478,11 @@ router.get('/college/analytics', requireAuth, requireRole(['college_rep']), asyn
           COALESCE(ROUND(AVG(a.avg_score)::numeric, 2), 0)::numeric AS avg_score
         FROM applications a
         JOIN specialties s ON s.id = a.specialty_id
-        WHERE a.college_id = $1
+        WHERE ${analyticsAliasConditions.join(' AND ')}
         GROUP BY s.id, s.code, s.name
         ORDER BY total DESC, s.name
         `,
-        [collegeId]
+        analyticsParams
       ),
       db.query(
         `
@@ -426,10 +493,11 @@ router.get('/college/analytics', requireAuth, requireRole(['college_rep']), asyn
         LEFT JOIN applications a
           ON a.college_id = $1
          AND a.created_at::date = day::date
+         ${specialtyId && specialtyId !== 'all' ? 'AND a.specialty_id = $2' : ''}
         GROUP BY day
         ORDER BY day
         `,
-        [collegeId]
+        analyticsParams
       )
     ]);
 

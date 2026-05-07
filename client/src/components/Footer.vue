@@ -43,8 +43,7 @@ onMounted(() => {
             <li><a href="/">Главная</a></li>
             <li><a href="/sector">Специальности</a></li>
             <li><a href="/colleges">Колледжи</a></li>
-            <li><a href="#">Поступление</a></li>
-            <li><a href="#">Новости</a></li>
+
           </ul>
         </div>
 

@@ -1801,6 +1801,11 @@ footer {
   margin-bottom: 26px;
 }
 
+.college-detail-page .section-title h2::after,
+.specialty-detail-page .section-title h2::after {
+  display: none;
+}
+
 /* Заголовок специальности */
 .specialty-header {
   background: linear-gradient(135deg, rgba(0, 84, 166, 0.96), rgba(0, 175, 79, 0.88));

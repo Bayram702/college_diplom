@@ -4,7 +4,7 @@
       <div class="container">
         <div class="header-content">
           <div>Официальный портал колледжей Республики Башкортостан</div>
-          <div>Приемная кампания 2026</div>
+          <div>Приемная компания 2026</div>
         </div>
       </div>
     </div>

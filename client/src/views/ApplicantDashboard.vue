@@ -1,93 +1,106 @@
 <template>
   <div class="applicant-dashboard">
     <div class="container dashboard-container">
-      <section class="dashboard-card">
-        <div class="card-header">
-          <h1>Личный кабинет абитуриента</h1>
-          <button class="btn-secondary" @click="loadAllData" :disabled="loadingProfile || loadingApplications || loadingFavorites || loadingReviews">
-            Обновить
+      <section class="dashboard-nav-card">
+        <div class="dashboard-tabs" role="tablist" aria-label="Разделы личного кабинета">
+          <button
+            v-for="tab in tabs"
+            :key="tab.id"
+            type="button"
+            class="dashboard-tab"
+            :class="{ active: activeTab === tab.id }"
+            @click="activeTab = tab.id"
+          >
+            <i :class="tab.icon"></i>
+            <span>{{ tab.label }}</span>
           </button>
         </div>
 
         <p v-if="pageError" class="notice is-error">{{ pageError }}</p>
       </section>
 
-      <section class="dashboard-card">
-        <h2>Профиль</h2>
-        <p v-if="profileMessage" :class="['notice', profileMessageType === 'error' ? 'is-error' : 'is-success']">
-          {{ profileMessage }}
-        </p>
-
-        <form class="profile-form" @submit.prevent="saveProfile">
-          <div class="grid">
-            <div class="form-group">
-              <label for="profile-name">ФИО <span class="required">*</span></label>
-              <input id="profile-name" v-model="profileForm.name" type="text" class="form-control" />
-              <p v-if="profileErrors.name" class="field-error">{{ profileErrors.name }}</p>
-            </div>
-            <div class="form-group">
-              <label for="profile-email">Email <span class="required">*</span></label>
-              <input id="profile-email" v-model="profileForm.email" type="email" class="form-control" />
-              <p v-if="profileErrors.email" class="field-error">{{ profileErrors.email }}</p>
-            </div>
+      <template v-if="activeTab === 'profile'">
+        <section class="dashboard-card">
+          <div class="applications-header">
+            <h2>Личная информация</h2>
+            <p class="applications-meta">Данные профиля и безопасность аккаунта</p>
           </div>
 
-          <div class="grid">
-            <div class="form-group">
-              <label for="profile-phone">Телефон</label>
-              <input
-                id="profile-phone"
-                v-model="profileForm.phone"
-                @input="onPhoneInput"
-                type="tel"
-                class="form-control"
-                placeholder="+7 (999) 123-45-67"
-              />
-              <p v-if="profileErrors.phone" class="field-error">{{ profileErrors.phone }}</p>
-            </div>
-          </div>
+          <p v-if="profileMessage" :class="['notice', profileMessageType === 'error' ? 'is-error' : 'is-success']">
+            {{ profileMessage }}
+          </p>
 
-          <div class="actions">
-            <button type="submit" class="btn-primary" :disabled="savingProfile">
-              {{ savingProfile ? 'Сохранение...' : 'Сохранить данные' }}
+          <form class="profile-form" @submit.prevent="saveProfile">
+            <div class="grid">
+              <div class="form-group">
+                <label for="profile-name">ФИО <span class="required">*</span></label>
+                <input id="profile-name" v-model="profileForm.name" type="text" class="form-control" />
+                <p v-if="profileErrors.name" class="field-error">{{ profileErrors.name }}</p>
+              </div>
+              <div class="form-group">
+                <label for="profile-email">Email <span class="required">*</span></label>
+                <input id="profile-email" v-model="profileForm.email" type="email" class="form-control" />
+                <p v-if="profileErrors.email" class="field-error">{{ profileErrors.email }}</p>
+              </div>
+            </div>
+
+            <div class="grid">
+              <div class="form-group">
+                <label for="profile-phone">Телефон</label>
+                <input
+                  id="profile-phone"
+                  v-model="profileForm.phone"
+                  @input="onPhoneInput"
+                  type="tel"
+                  class="form-control"
+                  placeholder="+7 (999) 123-45-67"
+                />
+                <p v-if="profileErrors.phone" class="field-error">{{ profileErrors.phone }}</p>
+              </div>
+            </div>
+
+            <div class="actions">
+              <button type="submit" class="btn-primary" :disabled="savingProfile">
+                {{ savingProfile ? 'Сохранение...' : 'Сохранить данные' }}
+              </button>
+            </div>
+          </form>
+        </section>
+
+        <section class="dashboard-card">
+          <h2>Смена пароля</h2>
+          <p v-if="passwordMessage" :class="['notice', passwordMessageType === 'error' ? 'is-error' : 'is-success']">
+            {{ passwordMessage }}
+          </p>
+
+          <div class="password-actions">
+            <button type="button" class="btn-secondary" @click="requestPasswordCode" :disabled="requestingPasswordCode">
+              {{ requestingPasswordCode ? 'Отправка...' : 'Получить код на почту' }}
             </button>
           </div>
-        </form>
-      </section>
 
-      <section class="dashboard-card">
-        <h2>Смена пароля</h2>
-        <p v-if="passwordMessage" :class="['notice', passwordMessageType === 'error' ? 'is-error' : 'is-success']">
-          {{ passwordMessage }}
-        </p>
-
-        <div class="password-actions">
-          <button type="button" class="btn-secondary" @click="requestPasswordCode" :disabled="requestingPasswordCode">
-            {{ requestingPasswordCode ? 'Отправка...' : 'Получить код на почту' }}
-          </button>
-        </div>
-
-        <form class="profile-form" @submit.prevent="confirmPasswordChange">
-          <div class="grid">
-            <div class="form-group">
-              <label for="password-code">Код из письма</label>
-              <input id="password-code" v-model="passwordForm.code" type="text" class="form-control" maxlength="6" inputmode="numeric" />
+          <form class="profile-form" @submit.prevent="confirmPasswordChange">
+            <div class="grid">
+              <div class="form-group">
+                <label for="password-code">Код из письма</label>
+                <input id="password-code" v-model="passwordForm.code" type="text" class="form-control" maxlength="6" inputmode="numeric" />
+              </div>
+              <div class="form-group">
+                <label for="new-password">Новый пароль</label>
+                <input id="new-password" v-model="passwordForm.newPassword" type="password" class="form-control" autocomplete="new-password" />
+              </div>
             </div>
-            <div class="form-group">
-              <label for="new-password">Новый пароль</label>
-              <input id="new-password" v-model="passwordForm.newPassword" type="password" class="form-control" autocomplete="new-password" />
+
+            <div class="actions">
+              <button type="submit" class="btn-primary" :disabled="changingPassword">
+                {{ changingPassword ? 'Смена пароля...' : 'Сменить пароль' }}
+              </button>
             </div>
-          </div>
+          </form>
+        </section>
+      </template>
 
-          <div class="actions">
-            <button type="submit" class="btn-primary" :disabled="changingPassword">
-              {{ changingPassword ? 'Смена пароля...' : 'Сменить пароль' }}
-            </button>
-          </div>
-        </form>
-      </section>
-
-      <section class="dashboard-card">
+      <section v-if="activeTab === 'applications'" class="dashboard-card">
         <div class="applications-header">
           <h2>Мои заявки</h2>
           <p class="applications-meta">Подано: {{ applicationsStats.total }} из {{ applicationsStats.limit }}. Осталось: {{ applicationsStats.remaining }}</p>
@@ -115,7 +128,7 @@
             <tbody>
               <tr v-for="item in applications" :key="item.id">
                 <td>{{ item.college_name }}</td>
-                <td>{{ item.specialty_code }} — {{ item.specialty_name }}</td>
+                <td>{{ item.specialty_code }} - {{ item.specialty_name }}</td>
                 <td>{{ item.avg_score }}</td>
                 <td>{{ item.needs_dormitory ? 'Да' : 'Нет' }}</td>
                 <td>
@@ -132,7 +145,7 @@
                   >
                     Отменить
                   </button>
-                  <span v-else class="text-muted">—</span>
+                  <span v-else class="text-muted">-</span>
                 </td>
               </tr>
             </tbody>
@@ -140,97 +153,64 @@
         </div>
       </section>
 
-      <section class="dashboard-card">
-        <div class="applications-header">
-          <h2>Мои отзывы</h2>
-          <p class="applications-meta">Опубликовано: {{ reviews.length }}</p>
-        </div>
+      <template v-if="activeTab === 'favorites'">
+        <section class="dashboard-card">
+          <div class="applications-header">
+            <h2>Избранное</h2>
+            <p class="applications-meta">
+              Колледжи: {{ favoriteColleges.length }}. Специальности: {{ favoriteSpecialties.length }}.
+            </p>
+          </div>
 
-        <p v-if="reviewsMessage" :class="['notice', reviewsMessageType === 'error' ? 'is-error' : 'is-success']">
-          {{ reviewsMessage }}
-        </p>
+          <div v-if="loadingFavorites" class="loading-state">Загрузка избранного...</div>
 
-        <div v-if="loadingReviews" class="loading-state">Загрузка отзывов...</div>
+          <div v-else-if="favoriteColleges.length === 0 && favoriteSpecialties.length === 0" class="empty-state">
+            В избранном пока ничего нет.
+          </div>
 
-        <div v-else-if="reviews.length === 0" class="empty-state">
-          У вас пока нет отзывов о колледжах.
-        </div>
-
-        <div v-else class="reviews-grid">
-          <article v-for="review in reviews" :key="review.id" class="dashboard-review-card">
-            <div class="review-card-header">
-              <div>
-                <h3>{{ review.college_name }}</h3>
-                <p>{{ review.city_name || 'Город не указан' }}</p>
-              </div>
-              <div class="review-stars" :aria-label="`${review.rating} из 5`">
-                <i
-                  v-for="star in 5"
-                  :key="star"
-                  :class="star <= review.rating ? 'fas fa-star' : 'far fa-star'"
-                ></i>
-              </div>
-            </div>
-            <p class="review-text">{{ review.text }}</p>
-            <div class="review-actions">
-              <span class="text-muted">{{ formatDate(review.created_at) }}</span>
-              <div>
-                <router-link :to="`/college/${review.college_id}`" class="btn-small">Открыть колледж</router-link>
-                <button class="btn-link-danger" @click="deleteReview(review)">Удалить</button>
-              </div>
-            </div>
-          </article>
-        </div>
-      </section>
-
-      <section class="dashboard-card">
-        <div class="applications-header">
-          <h2>Избранное</h2>
-          <p class="applications-meta">
-            Колледжи: {{ favoriteColleges.length }}. Специальности: {{ favoriteSpecialties.length }}.
-          </p>
-        </div>
-
-        <div v-if="loadingFavorites" class="loading-state">Загрузка избранного...</div>
-
-        <div v-else-if="favoriteColleges.length === 0 && favoriteSpecialties.length === 0" class="empty-state">
-          В избранном пока ничего нет.
-        </div>
-
-        <div v-else class="favorites-layout">
-          <div v-if="favoriteColleges.length > 0" class="favorites-column">
-            <h3>Колледжи</h3>
-            <Splide
-              class="favorites-splide"
-              :options="favoriteCarouselOptions"
-              aria-label="Избранные колледжи"
-            >
-              <SplideSlide v-for="college in favoriteColleges" :key="college.id">
-                <article class="favorite-card">
+          <div v-else class="favorites-layout">
+            <div v-if="favoriteColleges.length > 0" class="favorites-column">
+              <h3>Колледжи</h3>
+              <div class="favorites-list">
+                <article v-for="college in favoriteColleges" :key="college.id" class="favorite-card">
+                  <label class="compare-check">
+                    <input
+                      type="checkbox"
+                      :checked="isSelectedForCompare('college', college.id)"
+                      @change="toggleCompareSelection('college', college.id)"
+                    />
+                    <span>Сравнить</span>
+                  </label>
                   <img :src="resolveImageUrl(college.logo_image_url)" :alt="college.name" class="favorite-image">
                   <div class="favorite-content">
                     <h4>{{ college.name }}</h4>
                     <p>{{ college.city_name || 'Город не указан' }}</p>
+                    <div class="mini-rating">
+                      <i class="fas fa-star"></i>
+                      {{ formatNumber(college.review_average) }} · {{ college.review_count || 0 }} отзывов
+                    </div>
                     <div class="favorite-actions">
                       <router-link :to="`/college/${college.id}`" class="btn-small">Открыть</router-link>
                       <button class="btn-link-danger" @click="removeFavorite('college', college.id)">Убрать</button>
                     </div>
                   </div>
                 </article>
-              </SplideSlide>
-            </Splide>
-          </div>
+              </div>
+            </div>
 
-          <div v-if="favoriteSpecialties.length > 0" class="favorites-column">
-            <h3>Специальности</h3>
-            <Splide
-              class="favorites-splide"
-              :options="favoriteCarouselOptions"
-              aria-label="Избранные специальности"
-            >
-              <SplideSlide v-for="specialty in favoriteSpecialties" :key="specialty.id">
-                <article class="favorite-card">
-                  <div class="favorite-code">{{ specialty.code || '—' }}</div>
+            <div v-if="favoriteSpecialties.length > 0" class="favorites-column">
+              <h3>Специальности</h3>
+              <div class="favorites-list">
+                <article v-for="specialty in favoriteSpecialties" :key="specialty.id" class="favorite-card">
+                  <label class="compare-check">
+                    <input
+                      type="checkbox"
+                      :checked="isSelectedForCompare('specialty', specialty.id)"
+                      @change="toggleCompareSelection('specialty', specialty.id)"
+                    />
+                    <span>Сравнить</span>
+                  </label>
+                  <div class="favorite-code">{{ specialty.code || '-' }}</div>
                   <div class="favorite-content">
                     <h4>{{ specialty.name }}</h4>
                     <p>{{ specialty.description || 'Описание не указано' }}</p>
@@ -240,24 +220,115 @@
                     </div>
                   </div>
                 </article>
-              </SplideSlide>
-            </Splide>
+              </div>
+            </div>
           </div>
-        </div>
-      </section>
+        </section>
+
+        <section class="dashboard-card">
+          <div class="applications-header">
+            <h2>Сравнение избранного</h2>
+            <div class="compare-switch">
+              <button type="button" :class="{ active: compareType === 'college' }" @click="compareType = 'college'">Колледжи</button>
+              <button type="button" :class="{ active: compareType === 'specialty' }" @click="compareType = 'specialty'">Специальности</button>
+            </div>
+          </div>
+
+          <p class="compare-hint">
+            Отметьте минимум два элемента в избранном, чтобы сравнить их по основным параметрам.
+          </p>
+
+          <div v-if="activeCompareItems.length < 2" class="empty-state">
+            Выбрано: {{ activeCompareItems.length }}. Нужно выбрать минимум 2.
+          </div>
+
+          <div v-else class="table-wrapper compare-wrapper">
+            <table class="compare-table">
+              <thead>
+                <tr>
+                  <th>Параметр</th>
+                  <th v-for="item in activeCompareItems" :key="`${compareType}-${item.id}`">
+                    {{ item.name }}
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="row in activeCompareRows" :key="row.key">
+                  <td>{{ row.label }}</td>
+                  <td v-for="item in activeCompareItems" :key="`${row.key}-${item.id}`">
+                    {{ row.get(item) }}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="dashboard-card">
+          <div class="applications-header">
+            <h2>Мои отзывы</h2>
+            <p class="applications-meta">Опубликовано: {{ reviews.length }}</p>
+          </div>
+
+          <p v-if="reviewsMessage" :class="['notice', reviewsMessageType === 'error' ? 'is-error' : 'is-success']">
+            {{ reviewsMessage }}
+          </p>
+
+          <div v-if="loadingReviews" class="loading-state">Загрузка отзывов...</div>
+
+          <div v-else-if="reviews.length === 0" class="empty-state">
+            У вас пока нет отзывов о колледжах.
+          </div>
+
+          <div v-else class="reviews-grid">
+            <article v-for="review in reviews" :key="review.id" class="dashboard-review-card">
+              <div class="review-card-header">
+                <div>
+                  <h3>{{ review.college_name }}</h3>
+                  <p>{{ review.city_name || 'Город не указан' }}</p>
+                </div>
+                <div class="review-stars" :aria-label="`${review.rating} из 5`">
+                  <i
+                    v-for="star in 5"
+                    :key="star"
+                    :class="star <= review.rating ? 'fas fa-star' : 'far fa-star'"
+                  ></i>
+                </div>
+              </div>
+              <p class="review-text">{{ review.text }}</p>
+              <div class="review-actions">
+                <span class="text-muted">{{ formatDate(review.created_at) }}</span>
+                <div>
+                  <router-link :to="`/college/${review.college_id}`" class="btn-small">Открыть колледж</router-link>
+                  <button class="btn-link-danger" @click="deleteReview(review)">Удалить</button>
+                </div>
+              </div>
+            </article>
+          </div>
+        </section>
+      </template>
     </div>
   </div>
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import axios from 'axios'
-import { Splide, SplideSlide } from '@splidejs/vue-splide'
-import '@splidejs/vue-splide/css'
 import { maskRussianPhoneInput, normalizeRussianPhone, formatRussianPhone } from '../utils/phone'
 import { resolveImageUrl } from '../utils/images'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000/api'
+
+const tabs = [
+  { id: 'profile', label: 'Личная информация', icon: 'fas fa-user' },
+  { id: 'applications', label: 'Заявки', icon: 'fas fa-file-alt' },
+  { id: 'favorites', label: 'Избранное и отзывы', icon: 'fas fa-star' }
+]
+
+const activeTab = ref('profile')
+const compareType = ref('college')
+const selectedCollegeIds = ref([])
+const selectedSpecialtyIds = ref([])
 
 const loadingProfile = ref(false)
 const savingProfile = ref(false)
@@ -301,20 +372,61 @@ const applicationsStats = ref({
   limit: 5
 })
 
-const favoriteCarouselOptions = {
-  type: 'slide',
-  perPage: 1,
-  perMove: 1,
-  gap: '14px',
-  pagination: true,
-  arrows: true,
-  wheel: true,
-  waitForTransition: true,
-  wheelSleep: 450,
-  releaseWheel: true
-}
+const isAnyLoading = computed(
+  () => loadingProfile.value || loadingApplications.value || loadingFavorites.value || loadingReviews.value
+)
+
+const selectedIds = computed(() => compareType.value === 'college' ? selectedCollegeIds.value : selectedSpecialtyIds.value)
+const activeCompareItems = computed(() => {
+  const source = compareType.value === 'college' ? favoriteColleges.value : favoriteSpecialties.value
+  const ids = new Set(selectedIds.value.map(Number))
+  return source.filter(item => ids.has(Number(item.id)))
+})
+
+const collegeCompareRows = [
+  { key: 'city', label: 'Город', get: item => item.city_name || 'Не указан' },
+  { key: 'rating', label: 'Рейтинг', get: item => `${formatNumber(item.review_average)} из 5` },
+  { key: 'specialties_count', label: 'Количество специальностей', get: item => item.specialties_count || 0 },
+  { key: 'budget', label: 'Бюджетные места по специальностям', get: item => item.budget_places || 0 },
+  { key: 'commercial', label: 'Коммерческие места по специальностям', get: item => item.commercial_places || 0 },
+  { key: 'avg_score', label: 'Средний балл', get: item => item.avg_score || '-' },
+  { key: 'min_score', label: 'Минимальный балл', get: item => item.min_score || '-' },
+  { key: 'professionalitet', label: 'Профессионалитет', get: item => item.is_professionalitet ? 'Да' : 'Нет' }
+]
+
+const specialtyCompareRows = [
+  { key: 'code', label: 'Код', get: item => item.code || '-' },
+  { key: 'qualification', label: 'Квалификация', get: item => item.qualification || '-' },
+  { key: 'duration', label: 'Срок обучения', get: item => item.duration || '-' },
+  { key: 'base', label: 'База', get: item => formatBaseEducation(item.base_education) },
+  { key: 'form', label: 'Форма', get: item => formatStudyForm(item.form) },
+  { key: 'score', label: 'Средний балл прошлого года', get: item => item.avg_score_last_year || '-' },
+  { key: 'description', label: 'Описание', get: item => item.description || '-' }
+]
+
+const activeCompareRows = computed(() => compareType.value === 'college' ? collegeCompareRows : specialtyCompareRows)
 
 const getToken = () => localStorage.getItem('authToken')
+
+const formatNumber = (value) => {
+  const number = Number(value || 0)
+  return Number.isFinite(number) ? number.toFixed(1) : '0.0'
+}
+
+const formatBaseEducation = (value) => {
+  if (value === '9') return '9 классов'
+  if (value === '11') return '11 классов'
+  return value || '-'
+}
+
+const formatStudyForm = (value) => {
+  const forms = {
+    'full-time': 'Очная',
+    'part-time': 'Заочная',
+    distance: 'Дистанционная'
+  }
+  return forms[value] || value || '-'
+}
 
 const statusLabel = (value) => {
   if (value === 'accepted') return 'Принята'
@@ -336,9 +448,32 @@ const loadFavorites = async () => {
     if (response.data?.success) {
       favoriteColleges.value = response.data.data.colleges || []
       favoriteSpecialties.value = response.data.data.specialties || []
+      syncCompareSelection()
     }
   } finally {
     loadingFavorites.value = false
+  }
+}
+
+const syncCompareSelection = () => {
+  const collegeIds = new Set(favoriteColleges.value.map(item => Number(item.id)))
+  const specialtyIds = new Set(favoriteSpecialties.value.map(item => Number(item.id)))
+  selectedCollegeIds.value = selectedCollegeIds.value.filter(id => collegeIds.has(Number(id)))
+  selectedSpecialtyIds.value = selectedSpecialtyIds.value.filter(id => specialtyIds.has(Number(id)))
+}
+
+const isSelectedForCompare = (type, id) => {
+  const list = type === 'college' ? selectedCollegeIds.value : selectedSpecialtyIds.value
+  return list.some(item => Number(item) === Number(id))
+}
+
+const toggleCompareSelection = (type, id) => {
+  const target = type === 'college' ? selectedCollegeIds : selectedSpecialtyIds
+  const parsedId = Number(id)
+  if (target.value.some(item => Number(item) === parsedId)) {
+    target.value = target.value.filter(item => Number(item) !== parsedId)
+  } else {
+    target.value = [...target.value, parsedId]
   }
 }
 
@@ -352,8 +487,10 @@ const removeFavorite = async (entityType, entityId) => {
 
   if (entityType === 'college') {
     favoriteColleges.value = favoriteColleges.value.filter(item => Number(item.id) !== Number(entityId))
+    selectedCollegeIds.value = selectedCollegeIds.value.filter(item => Number(item) !== Number(entityId))
   } else {
     favoriteSpecialties.value = favoriteSpecialties.value.filter(item => Number(item.id) !== Number(entityId))
+    selectedSpecialtyIds.value = selectedSpecialtyIds.value.filter(item => Number(item) !== Number(entityId))
   }
 }
 
@@ -365,7 +502,7 @@ const statusClass = (value) => {
 }
 
 const formatDate = (value) => {
-  if (!value) return '—'
+  if (!value) return '-'
   return new Date(value).toLocaleString('ru-RU')
 }
 
@@ -546,7 +683,7 @@ const confirmPasswordChange = async () => {
       headers: { Authorization: `Bearer ${token}` }
     })
 
-    passwordMessage.value = response.data?.message || 'Пароль успешно изменён'
+    passwordMessage.value = response.data?.message || 'Пароль успешно изменен'
     passwordMessageType.value = 'success'
     passwordForm.value = { code: '', newPassword: '' }
   } catch (error) {
@@ -627,6 +764,14 @@ onMounted(async () => {
   box-shadow: var(--shadow-sm);
 }
 
+.dashboard-nav-card {
+  background: #fff;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 10px;
+  box-shadow: var(--shadow-sm);
+}
+
 .card-header,
 .applications-header {
   display: flex;
@@ -641,10 +786,41 @@ h2 {
   margin: 0;
 }
 
-.applications-meta {
-  margin: 0;
+.applications-meta,
+.compare-hint {
+  margin: 6px 0 0;
   color: var(--text-light);
   font-weight: 600;
+}
+
+.dashboard-tabs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 6px;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(0, 84, 166, 0.06), rgba(0, 166, 81, 0.08));
+}
+
+.dashboard-tab {
+  min-height: 42px;
+  border: none;
+  border-radius: 9px;
+  padding: 10px 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-dark);
+  background: transparent;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.dashboard-tab.active {
+  background: var(--primary-blue);
+  color: #fff;
+  box-shadow: 0 8px 18px rgba(0, 84, 166, 0.18);
 }
 
 .grid {
@@ -669,7 +845,8 @@ h2 {
   font-size: 0.85rem;
 }
 
-.actions {
+.actions,
+.password-actions {
   margin-top: 16px;
 }
 
@@ -678,7 +855,7 @@ h2 {
   border-radius: 12px;
   padding: 12px 20px;
   font-weight: 800;
-  letter-spacing: 0.01em;
+  letter-spacing: 0;
   color: #fff;
   background: linear-gradient(135deg, #0b66c3, #06a657);
   box-shadow: 0 10px 24px rgba(5, 81, 145, 0.25);
@@ -734,17 +911,32 @@ h2 {
   margin-top: 14px;
 }
 
-.applications-table {
+.applications-table,
+.compare-table {
   width: 100%;
   border-collapse: collapse;
 }
 
 .applications-table th,
-.applications-table td {
+.applications-table td,
+.compare-table th,
+.compare-table td {
   border-bottom: 1px solid var(--border-color);
   padding: 10px 8px;
   text-align: left;
   vertical-align: top;
+}
+
+.compare-table th:first-child,
+.compare-table td:first-child {
+  min-width: 160px;
+  font-weight: 800;
+  color: var(--text-dark);
+}
+
+.compare-table th:not(:first-child),
+.compare-table td:not(:first-child) {
+  min-width: 220px;
 }
 
 .status-badge {
@@ -792,41 +984,37 @@ h2 {
   margin: 0 0 12px;
 }
 
-.favorites-splide {
-  padding: 0 38px 26px;
-}
-
-.favorites-splide :deep(.splide__track) {
-  padding: 2px 0 8px;
-}
-
-.favorites-splide :deep(.splide__arrow) {
-  width: 32px;
-  height: 32px;
-  background: var(--primary-blue);
-  opacity: 1;
-}
-
-.favorites-splide :deep(.splide__arrow svg) {
-  fill: white;
-}
-
-.favorites-splide :deep(.splide__pagination) {
-  bottom: 0;
-}
-
-.favorites-splide :deep(.splide__pagination__page.is-active) {
-  background: var(--primary-blue);
+.favorites-list {
+  display: grid;
+  gap: 12px;
 }
 
 .favorite-card {
+  position: relative;
   display: flex;
   gap: 12px;
-  padding: 12px;
+  padding: 14px;
   border: 1px solid var(--border-color);
   border-radius: 12px;
   background: #f8fafc;
   min-height: 132px;
+}
+
+.compare-check {
+  position: absolute;
+  right: 12px;
+  top: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: #fff;
+  border: 1px solid var(--border-color);
+  font-size: 0.78rem;
+  font-weight: 800;
+  color: var(--text-dark);
+  cursor: pointer;
 }
 
 .favorite-image {
@@ -835,6 +1023,7 @@ h2 {
   border-radius: 10px;
   object-fit: cover;
   background: white;
+  flex-shrink: 0;
 }
 
 .favorite-code {
@@ -854,6 +1043,7 @@ h2 {
 .favorite-content {
   min-width: 0;
   flex: 1;
+  padding-right: 88px;
 }
 
 .favorite-content h4 {
@@ -869,11 +1059,47 @@ h2 {
   overflow: hidden;
 }
 
+.mini-rating {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  margin-top: 8px;
+  color: #f59e0b;
+  font-weight: 700;
+}
+
 .favorite-actions {
   display: flex;
   gap: 10px;
   align-items: center;
   margin-top: 10px;
+}
+
+.compare-switch {
+  display: inline-flex;
+  padding: 4px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.compare-switch button {
+  border: none;
+  border-radius: 7px;
+  padding: 8px 12px;
+  background: transparent;
+  color: var(--text-dark);
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.compare-switch button.active {
+  background: var(--primary-blue);
+  color: #fff;
+}
+
+.compare-wrapper {
+  margin-top: 16px;
 }
 
 .btn-link-danger {
@@ -947,21 +1173,28 @@ h2 {
   flex-wrap: wrap;
 }
 
-.password-actions {
-  margin-top: 12px;
-}
-
 @media (max-width: 768px) {
-  .grid {
-    grid-template-columns: 1fr;
-  }
-
+  .grid,
   .favorites-layout {
     grid-template-columns: 1fr;
   }
 
-  .favorites-splide {
-    padding: 0 32px 26px;
+  .dashboard-tab {
+    flex: 1 1 100%;
+    justify-content: center;
+  }
+
+  .favorite-card {
+    flex-direction: column;
+  }
+
+  .favorite-content {
+    padding-right: 0;
+  }
+
+  .compare-check {
+    position: static;
+    align-self: flex-start;
   }
 }
 </style>
