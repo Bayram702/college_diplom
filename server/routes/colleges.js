@@ -3,19 +3,45 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db'); // Ваш pool подключений к БД
 
+const getTokenPayload = (req) => {
+  const token = req.headers.authorization?.split(' ')[1];
+  if (!token) return null;
+
+  const jwt = require('jsonwebtoken');
+  return jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
+};
+
 // Middleware для проверки прав админа
 const requireAdmin = async (req, res, next) => {
   try {
-    const token = req.headers.authorization?.split(' ')[1];
-    if (!token) return res.status(401).json({ success: false, error: 'Требуется авторизация' });
-
-    const jwt = require('jsonwebtoken');
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
+    const decoded = getTokenPayload(req);
+    if (!decoded) return res.status(401).json({ success: false, error: 'Требуется авторизация' });
 
     if (decoded.roleName !== 'admin') {
       return res.status(403).json({ success: false, error: 'Доступ запрещён' });
     }
 
+    req.user = decoded;
+    next();
+  } catch (error) {
+    res.status(401).json({ success: false, error: 'Недействительный токен' });
+  }
+};
+
+const allowGuestOrApplicant = async (req, res, next) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader) {
+      req.user = null;
+      return next();
+    }
+
+    const decoded = getTokenPayload(req);
+    if (decoded.roleName !== 'applicant') {
+      return res.status(403).json({ success: false, error: 'Просмотр засчитывается только абитуриентам' });
+    }
+
+    req.user = decoded;
     next();
   } catch (error) {
     res.status(401).json({ success: false, error: 'Недействительный токен' });
@@ -46,6 +72,11 @@ router.get('/', async (req, res) => {
           FROM college_reviews cr
           WHERE cr.college_id = c.id AND cr.status = 'published'
         ) as review_count,
+        (
+          SELECT COUNT(*)::int
+          FROM college_views cv
+          WHERE cv.college_id = c.id
+        ) as view_count,
         COALESCE((
           SELECT SUM(cs.budget_places)::int
           FROM college_specialties cs
@@ -186,6 +217,7 @@ router.get('/', async (req, res) => {
       min_score: row.min_score,
       review_average: Number(row.review_average || 0),
       review_count: Number(row.review_count || 0),
+      view_count: Number(row.view_count || 0),
       is_professionalitet: row.is_professionalitet,
       professionalitet_cluster: row.professionalitet_cluster,
       phone: row.phone,
@@ -449,6 +481,45 @@ router.get('/stats', async (req, res) => {
   }
 });
 
+router.post('/:id/view', allowGuestOrApplicant, async (req, res) => {
+  try {
+    const collegeId = Number(req.params.id);
+    if (!Number.isInteger(collegeId) || collegeId <= 0) {
+      return res.status(400).json({ success: false, error: 'Некорректный ID колледжа' });
+    }
+
+    const collegeResult = await db.query(
+      `SELECT id FROM colleges WHERE id = $1 AND status = 'active' LIMIT 1`,
+      [collegeId]
+    );
+
+    if (collegeResult.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Колледж не найден' });
+    }
+
+    await db.query(
+      `INSERT INTO college_views (college_id, applicant_id, ip_address, user_agent)
+       VALUES ($1, $2, $3, $4)`,
+      [collegeId, req.user?.userId || null, req.ip, req.get('user-agent') || null]
+    );
+
+    const countResult = await db.query(
+      `SELECT COUNT(*)::int AS view_count FROM college_views WHERE college_id = $1`,
+      [collegeId]
+    );
+
+    res.json({
+      success: true,
+      data: {
+        view_count: Number(countResult.rows[0]?.view_count || 0)
+      }
+    });
+  } catch (error) {
+    console.error('Error recording college view:', error);
+    res.status(500).json({ success: false, error: 'Ошибка сервера' });
+  }
+});
+
 // Получить один колледж по ID
 router.get('/:id', async (req, res) => {
   try {
@@ -497,7 +568,12 @@ router.get('/:id', async (req, res) => {
           )
           FROM college_addresses ca
           WHERE ca.college_id = c.id AND ca.coordinates IS NOT NULL
-        ) as campuses
+        ) as campuses,
+        (
+          SELECT COUNT(*)::int
+          FROM college_views cv
+          WHERE cv.college_id = c.id
+        ) as view_count
       FROM colleges c
       LEFT JOIN cities ci ON c.city_id = ci.id
       WHERE c.id = $1 AND c.status = 'active'
@@ -512,6 +588,7 @@ router.get('/:id', async (req, res) => {
     const college = result.rows[0];
     college.specialties = college.specialties || [];
     college.campuses = college.campuses || [];
+    college.view_count = Number(college.view_count || 0);
 
     res.json({ success: true, data: college });
 

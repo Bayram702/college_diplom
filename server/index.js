@@ -4,6 +4,7 @@ const cors = require('cors');
 const path = require('path');
 require('dotenv').config();
 const runSqlMigrations = require('./run-sql-migrations');
+const seedSpoCatalog = require('./utils/spoCatalogSeeder');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -38,6 +39,7 @@ app.use('/api/upload', require('./routes/upload'));
 const startServer = async () => {
   try {
     await runSqlMigrations();
+    await seedSpoCatalog();
 
     app.listen(PORT, () => {
       console.log(`🚀 Сервер запущен на порту ${PORT}`);

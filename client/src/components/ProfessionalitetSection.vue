@@ -7,6 +7,11 @@
       </div>
       
       <div class="professionalitet-card">              
+        <img
+          src="/prof.png"
+          alt="Профессионалитет"
+          class="professionalitet-photo"
+        >
         <p><strong>«Профессионалитет»</strong> – это федеральный проект, направленный на создание в системе СПО нового уровня образования, при котором колледжи тесно сотрудничают с предприятиями-работодателями для подготовки кадров по наиболее востребованным профессиям.</p>
         
         <div class="professionalitet-info">
@@ -36,20 +41,6 @@
             <img :src="college.image" :alt="college.name" class="college-image-prof">
             <div class="college-content-prof">
               <h4>{{ college.name }}</h4>
-              <div class="college-details">
-                <div class="college-detail">
-                  <div class="detail-value">{{ college.cluster }}</div>
-                  <div class="detail-label">Отраслевой кластер</div>
-                </div>
-                <div class="college-detail">
-                  <div class="detail-value">{{ college.partners }}</div>
-                  <div class="detail-label">Партнеров</div>
-                </div>
-                <div class="college-detail">
-                  <div class="detail-value">{{ college.year }}</div>
-                  <div class="detail-label">Год вступления</div>
-                </div>
-              </div>
               <div class="college-tags">
                 <span class="college-tag cluster">{{ college.cluster }}</span>
               </div>
@@ -108,8 +99,6 @@ const loadProfessionalitetColleges = async () => {
         name: c.name,
         image: resolveImageUrl(c.logo_image_url),
         cluster: c.professionalitet_cluster || 'Не указан',
-        partners: 0, // Пока нет в БД, можно добавить позже
-        year: new Date(c.created_at).getFullYear() || 2023,
         link: `/college/${c.id}`
       }))
     }
@@ -131,5 +120,14 @@ onMounted(() => {
   padding: 40px;
   color: #666;
   font-size: 16px;
+}
+
+.professionalitet-photo {
+  width: 100%;
+  max-height: 320px;
+  object-fit: cover;
+  border-radius: 8px;
+  margin-bottom: 22px;
+  display: block;
 }
 </style>

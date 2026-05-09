@@ -3,6 +3,49 @@ const express = require('express')
 const router = express.Router()
 const db = require('../db')
 
+const normalizeSectorCode = (value) => {
+  const raw = String(value || '').trim()
+  const officialSectorCode = raw.match(/^\d{2}\.00\.00$/)
+  if (officialSectorCode) return officialSectorCode[0]
+
+  const specialtyCodePrefix = raw.match(/^(\d{2})\./)
+  if (specialtyCodePrefix) return `${specialtyCodePrefix[1]}.00.00`
+
+  return raw.match(/^\d+/)?.[0] || ''
+}
+
+const ensureSpecialtySector = async (specialtyId, sectorCode, sectorName) => {
+  const normalizedCode = normalizeSectorCode(sectorCode)
+  if (!specialtyId || !normalizedCode) return
+
+  const name = String(sectorName || '').trim() || `Отрасль ${normalizedCode}`
+  const existing = await db.query(`SELECT id FROM sectors WHERE code = $1 LIMIT 1`, [normalizedCode])
+
+  let sectorId
+  if (existing.rows.length > 0) {
+    sectorId = existing.rows[0].id
+    await db.query(
+      `UPDATE sectors SET name = $2, is_active = true WHERE id = $1`,
+      [sectorId, name]
+    )
+  } else {
+    const created = await db.query(
+      `INSERT INTO sectors (name, code, description, image_url, sort_order, is_active)
+       VALUES ($1, $2, $3, NULL, 0, true)
+       RETURNING id`,
+      [name, normalizedCode, `Укрупненная группа специальностей СПО ${sectorCode}`]
+    )
+    sectorId = created.rows[0].id
+  }
+
+  await db.query(
+    `INSERT INTO specialty_sectors (specialty_id, sector_id)
+     VALUES ($1, $2)
+     ON CONFLICT (specialty_id, sector_id) DO NOTHING`,
+    [specialtyId, sectorId]
+  )
+}
+
 const requireCollegeRep = async (req, res, next) => {
   try {
     console.log('🔑 requireCollegeRep: проверяем токен')
@@ -50,7 +93,7 @@ router.get('/', requireCollegeRep, async (req, res) => {
 // Создать специальность
 router.post('/', requireCollegeRep, async (req, res) => {
   try {
-    const { name, code, description, qualification, duration, base_education, form, exams, budget_places, commercial_places, price_per_year, avg_score, status } = req.body
+    const { name, code, description, qualification, duration, base_education, form, exams, budget_places, commercial_places, price_per_year, avg_score, status, sector_code, sector_name } = req.body
 
     const specResult = await db.query(
       `INSERT INTO specialties (code, name, description, qualification, duration, base_education, form, exams, avg_score_last_year, status)
@@ -58,6 +101,7 @@ router.post('/', requireCollegeRep, async (req, res) => {
       [code, name, description, qualification, duration, base_education, form, exams, avg_score || null, status || 'active']
     )
     const specId = specResult.rows[0].id
+    await ensureSpecialtySector(specId, sector_code || code, sector_name)
 
     await db.query(
       `INSERT INTO college_specialties (college_id, specialty_id, budget_places, commercial_places, price_per_year)
@@ -76,13 +120,14 @@ router.post('/', requireCollegeRep, async (req, res) => {
 router.put('/:id', requireCollegeRep, async (req, res) => {
   try {
     const { id } = req.params
-    const { name, code, description, qualification, duration, base_education, form, exams, budget_places, commercial_places, price_per_year, avg_score, status } = req.body
+    const { name, code, description, qualification, duration, base_education, form, exams, budget_places, commercial_places, price_per_year, avg_score, status, sector_code, sector_name } = req.body
 
     await db.query(
       `UPDATE specialties SET code=$1, name=$2, description=$3, qualification=$4, duration=$5,
        base_education=$6, form=$7, exams=$8, avg_score_last_year=$9, status=$10 WHERE id=$11`,
       [code, name, description, qualification, duration, base_education, form, exams, avg_score || null, status, id]
     )
+    await ensureSpecialtySector(id, sector_code || code, sector_name)
 
     await db.query(
       `UPDATE college_specialties SET budget_places=$1, commercial_places=$2, price_per_year=$3

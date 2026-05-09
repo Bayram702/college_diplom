@@ -610,6 +610,46 @@ router.put('/me', async (req, res) => {
   }
 });
 
+router.post('/admin/password', requireAuth, requireRole(['admin']), async (req, res) => {
+  try {
+    const currentPassword = typeof req.body.currentPassword === 'string' ? req.body.currentPassword : '';
+    const newPassword = typeof req.body.newPassword === 'string' ? req.body.newPassword : '';
+
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ success: false, error: 'Укажите текущий и новый пароль' });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({ success: false, error: 'Новый пароль должен содержать минимум 6 символов' });
+    }
+
+    const userResult = await db.query(
+      `SELECT id, password_hash FROM users WHERE id = $1 AND status = 'active' LIMIT 1`,
+      [req.user.userId]
+    );
+
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Администратор не найден' });
+    }
+
+    const isValidPassword = await bcrypt.compare(currentPassword, userResult.rows[0].password_hash);
+    if (!isValidPassword) {
+      return res.status(400).json({ success: false, error: 'Текущий пароль указан неверно' });
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, 10);
+    await db.query(
+      `UPDATE users SET password_hash = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
+      [passwordHash, req.user.userId]
+    );
+
+    return res.json({ success: true, message: 'Пароль администратора обновлён' });
+  } catch (error) {
+    console.error('POST /api/auth/admin/password error:', error);
+    return res.status(500).json({ success: false, error: 'Ошибка сервера' });
+  }
+});
+
 router.post('/password-change/request', requireAuth, requireRole(['applicant']), async (req, res) => {
   try {
     const userResult = await db.query(

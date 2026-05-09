@@ -154,6 +154,10 @@
                 </span>
                 <span class="rating-count">{{ college.review_count || 0 }} отзывов</span>
               </div>
+
+              <div class="college-views">
+                <i class="fas fa-eye"></i> {{ formatNumber(college.view_count || 0) }} просмотров
+              </div>
               
               <div class="college-location">
                 <i class="fas fa-map-marker-alt"></i> {{ college.city_name || college.city }}
@@ -479,6 +483,8 @@ const formatRating = (value) => {
   return rating.toFixed(1)
 }
 
+const formatNumber = (value) => Number(value || 0).toLocaleString('ru-RU')
+
 const handleScroll = () => {
   showBackToTop.value = window.pageYOffset > 300
 }
@@ -546,6 +552,19 @@ onUnmounted(() => {
 
 .rating-count {
   white-space: nowrap;
+}
+
+.college-views {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-light);
+  font-size: 0.95rem;
+  margin-bottom: 10px;
+}
+
+.college-views i {
+  color: var(--primary-blue);
 }
 
 /* Стили для пагинации */

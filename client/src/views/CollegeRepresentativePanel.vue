@@ -731,14 +731,37 @@
           
           <div class="settings-grid">
             <div class="form-group">
-              <label>Название специальности <span class="required">*</span></label>
-              <input v-model="specialityForm.name" type="text" class="form-control" required>
+              <label>Отрасль <span class="required">*</span></label>
+              <select v-model="selectedSectorCode" class="form-control" required @change="applySelectedSector">
+                <option value="" disabled>Выберите отрасль</option>
+                <option v-for="sector in spoSpecialtyGroups" :key="sector.code" :value="sector.code">
+                  {{ sector.code }} — {{ sector.name }}
+                </option>
+              </select>
             </div>
             
             <div class="form-group">
-              <label>Код специальности <span class="required">*</span></label>
-              <input v-model="specialityForm.code" type="text" class="form-control" required>
+              <label>Специальность <span class="required">*</span></label>
+              <select
+                v-model="selectedSpecialtyCode"
+                class="form-control"
+                required
+                :disabled="!selectedSectorCode"
+                @change="applySelectedSpecialty"
+              >
+                <option value="" disabled>Выберите специальность</option>
+                <option v-for="specialty in selectedSectorSpecialties" :key="specialty.code" :value="specialty.code">
+                  {{ specialty.code }} — {{ specialty.name }}
+                </option>
+              </select>
             </div>
+          </div>
+
+          <div v-if="specialityForm.code && specialityForm.name" class="selected-specialty-summary">
+            <span>Код</span>
+            <strong>{{ specialityForm.code }}</strong>
+            <span>Название</span>
+            <strong>{{ specialityForm.name }}</strong>
           </div>
           
           <div class="settings-grid">
@@ -940,6 +963,7 @@ const collegeData = ref({
 // Специальности (загружаются из БД)
 const specialities = ref([])
 const specialitySearch = ref('')
+const spoSpecialtyGroups = ref([])
 
 // Адреса (загружаются из БД)
 const addresses = ref([])
@@ -969,11 +993,13 @@ const showSpecialityModal = ref(false)
 const editingSpeciality = ref(null)
 const showAddressModal = ref(false)
 const editingAddress = ref(null)
+const selectedSectorCode = ref('')
+const selectedSpecialtyCode = ref('')
 
 const specialityForm = ref({
   id: '', name: '', code: '', duration: '', base_education: '9', form: 'full-time',
   budget_places: 0, commercial_places: 0, price_per_year: 0, exams: '', avg_score: 0,
-  description: '', qualification: '', status: 'active'
+  description: '', qualification: '', status: 'active', sector_code: '', sector_name: ''
 })
 
 const addressForm = ref({
@@ -1008,6 +1034,21 @@ const socialOtherText = computed({
 })
 
 const filteredSpecialities = computed(() => specialities.value)
+
+const selectedSector = computed(() => {
+  return spoSpecialtyGroups.value.find((sector) => sector.code === selectedSectorCode.value) || null
+})
+
+const selectedSectorSpecialties = computed(() => {
+  const specialties = (selectedSector.value?.specialties || []).map(([code, name]) => ({ code, name }))
+  const hasCurrentSpecialty = specialties.some((item) => item.code === specialityForm.value.code)
+
+  if (specialityForm.value.code && specialityForm.value.name && !hasCurrentSpecialty) {
+    return [{ code: specialityForm.value.code, name: specialityForm.value.name }, ...specialties]
+  }
+
+  return specialties
+})
 
 const calculatedCollegePlaces = computed(() => {
   return specialities.value.reduce((totals, speciality) => {
@@ -1225,22 +1266,84 @@ const handleImageUpload = async (event, type) => {
 }
 
 // Специальности CRUD
+const fetchSpoCatalog = async () => {
+  try {
+    const response = await fetch(`${API_URL}/sectors/catalog`)
+    const result = await response.json()
+    if (result.success) {
+      spoSpecialtyGroups.value = result.data || []
+    }
+  } catch (error) {
+    console.warn('Не удалось загрузить каталог специальностей СПО:', error)
+  }
+}
+
+const getSectorForSpecialtyCode = (code, fallbackName = '') => {
+  for (const group of spoSpecialtyGroups.value) {
+    const item = group.specialties.find((specialty) => specialty.code === code)
+    if (item) {
+      return { sectorCode: group.code, sectorName: group.name, code: item.code, name: item.name }
+    }
+  }
+
+  const prefix = String(code || '').slice(0, 2)
+  const sector = spoSpecialtyGroups.value.find((group) => group.code.startsWith(prefix))
+  if (!sector) return null
+
+  return {
+    sectorCode: sector.code,
+    sectorName: sector.name,
+    code,
+    name: fallbackName
+  }
+}
+
+const applySelectedSector = () => {
+  const sector = selectedSector.value
+  specialityForm.value.sector_code = sector?.code || ''
+  specialityForm.value.sector_name = sector?.name || ''
+  selectedSpecialtyCode.value = ''
+  specialityForm.value.code = ''
+  specialityForm.value.name = ''
+}
+
+const applySelectedSpecialty = () => {
+  const specialty = selectedSectorSpecialties.value.find((item) => item.code === selectedSpecialtyCode.value)
+  if (!specialty) return
+
+  specialityForm.value.code = specialty.code
+  specialityForm.value.name = specialty.name
+  specialityForm.value.sector_code = selectedSector.value?.code || ''
+  specialityForm.value.sector_name = selectedSector.value?.name || ''
+}
+
 const openSpecialityModal = (spec = null) => {
   editingSpeciality.value = spec
   if (spec) {
-    specialityForm.value = { ...spec }
+    const directoryItem = getSectorForSpecialtyCode(spec.code, spec.name)
+    specialityForm.value = {
+      ...spec,
+      sector_code: directoryItem?.sectorCode || '',
+      sector_name: directoryItem?.sectorName || ''
+    }
+    selectedSectorCode.value = directoryItem?.sectorCode || ''
+    selectedSpecialtyCode.value = spec.code || ''
   } else {
     specialityForm.value = {
       id: '', name: '', code: '', duration: '', base_education: '9', form: 'full-time',
       budget_places: 0, commercial_places: 0, price_per_year: 0, exams: '', avg_score: 0,
-      description: '', qualification: '', status: 'active'
+      description: '', qualification: '', status: 'active', sector_code: '', sector_name: ''
     }
+    selectedSectorCode.value = ''
+    selectedSpecialtyCode.value = ''
   }
   showSpecialityModal.value = true
 }
 const closeSpecialityModal = () => { showSpecialityModal.value = false }
 
 const saveSpeciality = async () => {
+  if (!selectedSectorCode.value) return showAlert('Выберите отрасль', 'error')
+  if (!selectedSpecialtyCode.value) return showAlert('Выберите специальность', 'error')
   if (!specialityForm.value.name?.trim()) return showAlert('Название специальности обязательно', 'error')
   if (!specialityForm.value.code?.trim()) return showAlert('Код специальности обязателен', 'error')
 
@@ -1557,6 +1660,7 @@ watch(activeTab, (tab) => {
 })
 
 onMounted(() => {
+  fetchSpoCatalog()
   loadCollegeData()
   fetchPendingApplicationsCount()
   fetchApplicationsAnalytics()
@@ -1900,6 +2004,28 @@ onMounted(() => {
   width: 18px;
   height: 18px;
   cursor: pointer;
+}
+
+.selected-specialty-summary {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 6px 14px;
+  margin: 12px 0 18px;
+  padding: 14px 16px;
+  border: 1px solid #dbeafe;
+  border-radius: 8px;
+  background: #f8fbff;
+}
+
+.selected-specialty-summary span {
+  color: #64748b;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.selected-specialty-summary strong {
+  color: #0f172a;
+  line-height: 1.35;
 }
 
 /* Стили для превью изображений и кнопки удаления */

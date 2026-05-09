@@ -50,7 +50,7 @@
                 :class="{ active: activeSector === sector.id }"
                 @click="filterBySector(sector.id)"
               >
-                <div class="sector-icon"><i :class="sector.icon"></i></div>
+                <div v-if="sector.icon" class="sector-icon"><i :class="sector.icon"></i></div>
                 <div class="sector-name">{{ sector.name }}</div>
                 <div class="sector-code" v-if="sector.code">{{ sector.code }}</div>
               </button>
@@ -221,15 +221,24 @@ const SECTOR_ICONS = {
   'default': 'fas fa-folder'
 }
 
+const getSectorKey = (sector) => sector.code?.match(/^\d{2}/)?.[0] || sector.name?.trim().toLowerCase() || String(sector.id)
+
 const loadSectors = async () => {
   try {
     const response = await fetch(`${API_URL}/sectors`)
     const result = await response.json()
     if (result.success) {
-      const sectorCards = result.data.map(s => ({
+      const uniqueSectors = Array.from(
+        result.data.reduce((map, sector) => {
+          const key = getSectorKey(sector)
+          if (!map.has(key)) map.set(key, sector)
+          return map
+        }, new Map()).values()
+      )
+      const sectorCards = uniqueSectors.map(s => ({
         id: String(s.id),
         name: s.name,
-        icon: SECTOR_ICONS[s.code?.substring(0, 2)] || SECTOR_ICONS.default,
+        icon: '',
         code: s.code
       }))
       // Полностью заменяем массив, чтобы избежать дубликатов

@@ -36,6 +36,9 @@
               <p v-if="college.city" class="header-city">
                 <i class="fas fa-map-marker-alt"></i> {{ college.city }}
               </p>
+              <p class="header-views">
+                <i class="fas fa-eye"></i> {{ formatNumber(college.view_count || 0) }} просмотров
+              </p>
               <button
                 v-if="isApplicant"
                 type="button"
@@ -697,6 +700,8 @@ const parseAvgScore = (value) => {
 
 const getAuthToken = () => localStorage.getItem('authToken')
 
+const formatNumber = (value) => Number(value || 0).toLocaleString('ru-RU')
+
 const syncCurrentUser = () => {
   const rawUser = localStorage.getItem('user')
   if (!rawUser) {
@@ -755,6 +760,27 @@ const loadReviews = async () => {
     setReviewMessage(error.response?.data?.error || 'Не удалось загрузить отзывы', 'error')
   } finally {
     loadingReviews.value = false
+  }
+}
+
+const recordCollegeView = async () => {
+  if (!college.value?.id) return
+  const token = getAuthToken()
+  const headers = token && isApplicant.value
+    ? { Authorization: `Bearer ${token}` }
+    : {}
+
+  if (token && !isApplicant.value) return
+
+  try {
+    const response = await axios.post(`${API_URL}/colleges/${college.value.id}/view`, {}, {
+      headers
+    })
+    if (response.data?.success) {
+      college.value.view_count = response.data.data.view_count
+    }
+  } catch (err) {
+    console.warn('Не удалось засчитать просмотр колледжа:', err.response?.data?.error || err.message)
   }
 }
 
@@ -1014,6 +1040,7 @@ const fetchCollege = async () => {
         loadFavoriteStatus(),
         loadReviews()
       ])
+      await recordCollegeView()
     } else {
       throw new Error(response.data.error || 'Ошибка загрузки данных')
     }
@@ -1401,8 +1428,18 @@ onUnmounted(() => {
   gap: 8px;
 }
 
-.college-header .header-city i {
+.college-header .header-city i,
+.college-header .header-views i {
   color: white;
+}
+
+.college-header .header-views {
+  margin: 12px 0 0;
+  font-size: 1rem;
+  color: rgba(255, 255, 255, 0.9);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .detail-favorite-btn {

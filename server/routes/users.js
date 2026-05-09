@@ -110,18 +110,22 @@ const ensureCollegeCanReceiveRep = async (collegeId, currentUserId = null) => {
 // Получить всех пользователей (кроме админов, если нужно)
 router.get('/', requireAdmin, async (req, res) => {
   try {
-    const { excludeAdmin, search, role, status, page = 1, limit = 10 } = req.query;
+    const { excludeAdmin, portal_users, search, role, status, page = 1, limit = 10 } = req.query;
 
     // Если запрошены ВСЕ пользователи без фильтрации (захардкоженный режим)
     const getAll = req.query.all === 'true';
 
-    const conditions = [`r.name = 'college_rep'`];
+    const conditions = [];
     const params = [];
     let paramIndex = 1;
 
     // Исключить админов (только если не запрошены все)
     if (!getAll && excludeAdmin === 'true') {
       conditions.push(`r.name != 'admin'`);
+    }
+
+    if (portal_users === 'true') {
+      conditions.push(`r.name IN ('college_rep', 'applicant')`);
     }
 
     // Поиск

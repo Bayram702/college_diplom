@@ -2,7 +2,44 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db');
 
-const normalizeSectorCode = (value) => String(value || '').trim().match(/^\d+/)?.[0] || '';
+const normalizeSectorCode = (value) => {
+  const raw = String(value || '').trim();
+  const officialSectorCode = raw.match(/^\d{2}\.00\.00$/);
+  if (officialSectorCode) return officialSectorCode[0];
+
+  const specialtyCodePrefix = raw.match(/^(\d{2})\./);
+  if (specialtyCodePrefix) return `${specialtyCodePrefix[1]}.00.00`;
+
+  const numericPrefix = raw.match(/^\d{1,2}/)?.[0];
+  if (numericPrefix) return `${numericPrefix.padStart(2, '0')}.00.00`;
+
+  return '';
+};
+
+const sectorPrefixSql = (specialtyCodeExpression, sectorCodeExpression) =>
+  `LEFT(${specialtyCodeExpression}, 2) = LEFT(${sectorCodeExpression}, 2)`;
+
+const SECTOR_IMAGES = {
+  '05': '/5.jpg',
+  '07': '/prof.png',
+  '08': '/1.jpg',
+  '09': '/yarmarka.png',
+  '10': '/6.png',
+  '11': '/cpk.jpg',
+  '12': '/ymk.jpg',
+  '31': '/3.jpg',
+  '35': '/5.jpg',
+  '38': '/2.jpg',
+  '43': '/6.png',
+  '44': '/4.jpg',
+  default: '/1.jpg'
+};
+
+const getSectorImageUrl = (row) => {
+  if (row.image_url) return row.image_url;
+  const prefix = String(row.code || '').match(/^\d{2}/)?.[0];
+  return SECTOR_IMAGES[prefix] || SECTOR_IMAGES.default;
+};
 
 const syncSectorSpecialtiesByCode = async (sectorId, code) => {
   const normalizedCode = normalizeSectorCode(code);
@@ -13,23 +50,53 @@ const syncSectorSpecialtiesByCode = async (sectorId, code) => {
      SELECT s.id, $1
      FROM specialties s
      WHERE NULLIF(s.code, '') IS NOT NULL
-       AND LEFT(s.code, LENGTH($2)) = $2
+       AND ${sectorPrefixSql('s.code', '$2')}
      ON CONFLICT (specialty_id, sector_id) DO NOTHING`,
     [sectorId, normalizedCode]
   );
 };
 
+const sectorDedupKeySql = (alias) => `
+  COALESCE(
+    substring(NULLIF(${alias}.code, '') from '^\\d{2}'),
+    LOWER(${alias}.name)
+  )
+`;
+
+const uniqueSectorSql = (activeOnly = false) => `
+  s.id = (
+    SELECT MIN(s2.id)
+    FROM sectors s2
+    WHERE ${sectorDedupKeySql('s2')} = ${sectorDedupKeySql('s')}
+      ${activeOnly ? 'AND s2.is_active = true' : ''}
+  )
+`;
+
 router.get('/', async (req, res) => {
   try {
-    const { include_inactive } = req.query;
+    const { include_inactive, catalog_only } = req.query;
 
     const params = [];
-    let whereClause = '';
+    const filters = [];
 
     if (!include_inactive) {
       params.push(true);
-      whereClause = `WHERE s.is_active = $1`;
+      filters.push(`s.is_active = $${params.length}`);
     }
+
+    if (!include_inactive || catalog_only) {
+      filters.push(uniqueSectorSql(!include_inactive));
+    }
+
+    if (catalog_only) {
+      filters.push(`EXISTS (
+        SELECT 1
+        FROM spo_specialty_catalog cat
+        WHERE cat.sector_code = s.code
+      )`);
+    }
+
+    const whereClause = filters.length > 0 ? `WHERE ${filters.join(' AND ')}` : '';
 
     const query = `
       SELECT
@@ -55,7 +122,7 @@ router.get('/', async (req, res) => {
             FROM specialty_sectors ss
             WHERE ss.sector_id = s.id AND ss.specialty_id = sp.id
           )
-          OR (NULLIF(s.code, '') IS NOT NULL AND LEFT(sp.code, LENGTH(s.code)) = s.code)
+          OR (NULLIF(s.code, '') IS NOT NULL AND ${sectorPrefixSql('sp.code', 's.code')})
         )
       LEFT JOIN college_specialties cs ON cs.specialty_id = sp.id
       LEFT JOIN colleges c ON c.id = cs.college_id
@@ -71,7 +138,7 @@ router.get('/', async (req, res) => {
       name: row.name,
       code: row.code,
       description: row.description,
-      image_url: row.image_url,
+      image_url: getSectorImageUrl(row),
       colleges_count: Number(row.colleges_count) || 0,
       programs_count: Number(row.programs_count) || 0,
       sort_order: row.sort_order,
@@ -81,6 +148,41 @@ router.get('/', async (req, res) => {
     res.json({ success: true, data: sectors });
   } catch (error) {
     console.error('Error fetching sectors:', error);
+    res.status(500).json({ success: false, error: 'Ошибка сервера' });
+  }
+});
+
+router.get('/catalog', async (req, res) => {
+  try {
+    const result = await db.query(`
+      SELECT
+        sector_code,
+        sector_name,
+        specialty_code,
+        specialty_name
+      FROM spo_specialty_catalog
+      ORDER BY sector_code, specialty_code
+    `);
+
+    const grouped = new Map();
+    for (const row of result.rows) {
+      if (!grouped.has(row.sector_code)) {
+        grouped.set(row.sector_code, {
+          code: row.sector_code,
+          name: row.sector_name,
+          specialties: []
+        });
+      }
+
+      grouped.get(row.sector_code).specialties.push({
+        code: row.specialty_code,
+        name: row.specialty_name
+      });
+    }
+
+    res.json({ success: true, data: Array.from(grouped.values()) });
+  } catch (error) {
+    console.error('Error fetching SPO catalog:', error);
     res.status(500).json({ success: false, error: 'Ошибка сервера' });
   }
 });
@@ -125,7 +227,7 @@ router.get('/:id', async (req, res) => {
           JOIN colleges c2 ON cs2.college_id = c2.id
           LEFT JOIN cities ci ON c2.city_id = ci.id
           LEFT JOIN specialty_sectors ss2 ON ss2.specialty_id = cs2.specialty_id
-          WHERE (ss2.sector_id = s.id OR (NULLIF(s.code, '') IS NOT NULL AND LEFT(sp2.code, LENGTH(s.code)) = s.code))
+          WHERE (ss2.sector_id = s.id OR (NULLIF(s.code, '') IS NOT NULL AND ${sectorPrefixSql('sp2.code', 's.code')}))
             AND c2.status = 'active'
             AND cs2.is_active = true
         ) AS colleges
@@ -137,7 +239,7 @@ router.get('/:id', async (req, res) => {
             FROM specialty_sectors ss
             WHERE ss.sector_id = s.id AND ss.specialty_id = sp.id
           )
-          OR (NULLIF(s.code, '') IS NOT NULL AND LEFT(sp.code, LENGTH(s.code)) = s.code)
+          OR (NULLIF(s.code, '') IS NOT NULL AND ${sectorPrefixSql('sp.code', 's.code')})
         )
       LEFT JOIN college_specialties cs ON cs.specialty_id = sp.id
       LEFT JOIN colleges c ON c.id = cs.college_id
@@ -152,6 +254,7 @@ router.get('/:id', async (req, res) => {
     }
 
     const sector = result.rows[0];
+    sector.image_url = getSectorImageUrl(sector);
     sector.colleges_count = Number(sector.colleges_count) || 0;
     sector.programs_count = Number(sector.programs_count) || 0;
     sector.colleges = sector.colleges || [];
