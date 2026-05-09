@@ -91,6 +91,7 @@
                 <th>Колледж</th>
                 <th>Статус</th>
                 <th>Дата регистрации</th>
+                <th>Последняя активность</th>
                 <th>Действия</th>
               </tr>
             </thead>
@@ -99,7 +100,6 @@
                 <td>{{ user.id }}</td>
                 <td>
                   <div class="user-info">
-                    <div class="user-avatar">{{ user.name.charAt(0) }}</div>
                     <span>{{ user.name }}</span>
                   </div>
                 </td>
@@ -115,12 +115,18 @@
                   <span class="status-badge" :class="getStatusClass(user.status)">{{ getStatusName(user.status) }}</span>
                 </td>
                 <td>{{ formatDate(user.createdAt) }}</td>
+                <td>{{ formatDateTime(user.lastActivityAt) }}</td>
                 <td>
-                  <div v-if="user.role?.name === 'college_rep'" class="action-buttons">
+                  <div v-if="['college_rep', 'applicant'].includes(user.role?.name)" class="action-buttons">
                     <button class="btn-icon btn-edit" @click="editUser(user)" title="Редактировать">
                       <i class="fas fa-edit"></i>
                     </button>
-                    <button class="btn-icon btn-delete" @click="deactivateUser(user)" title="Деактивировать">
+                    <button
+                      class="btn-icon btn-delete"
+                      :disabled="user.status === 'inactive'"
+                      @click="deactivateUser(user)"
+                      title="Сделать неактивным"
+                    >
                       <i class="fas fa-ban"></i>
                     </button>
                   </div>
@@ -673,7 +679,8 @@ const getRoleName = (role) => ({ admin: 'Администратор', college_re
 const getStatusName = (status) => ({ active: 'Активный', inactive: 'Неактивный', blocked: 'Заблокирован' }[status] || status)
 const getStatusClass = (status) => ({ active: 'status-active', inactive: 'status-inactive', blocked: 'status-blocked' }[status] || '')
 const formatDate = (d) => d ? new Date(d).toLocaleDateString('ru-RU') : '—'
-const getUserCollegeName = (user) => user.college?.name || 'Не назначен'
+const formatDateTime = (d) => d ? new Date(d).toLocaleString('ru-RU') : '—'
+const getUserCollegeName = (user) => user.role?.name === 'applicant' ? '—' : (user.college?.name || 'Не назначен')
 
 const syncAdminProfileFromStorage = () => {
   try {
@@ -798,6 +805,12 @@ const openAddRepModal = () => {
 }
 const closeUserModal = () => { showUserModal.value = false }
 const editUser = (user) => {
+  if (user.role?.name !== 'college_rep') {
+    alertMessage.value = 'Редактирование доступно только для представителей колледжа'
+    alertType.value = 'info'
+    return
+  }
+
   editingUser.value = user
   userForm.value = {
     name: user.name || '',
@@ -867,19 +880,20 @@ const saveUser = async () => {
 }
 
 const deactivateUser = async (user) => {
+  const roleName = getRoleName(user.role?.name).toLowerCase()
   if (user.status === 'inactive') {
-    alertMessage.value = `Представитель "${user.name}" уже деактивирован`
+    alertMessage.value = `Пользователь "${user.name}" уже неактивен`
     alertType.value = 'info'
     return
   }
   
-  if (!confirm(`Деактивировать "${user.name}"? Представитель потеряет доступ к системе.`)) return
+  if (!confirm(`Сделать ${roleName} "${user.name}" неактивным? Пользователь потеряет доступ к системе.`)) return
   
   try {
     const token = localStorage.getItem('authToken')
     await axios.delete(`${API_URL}/users/${user.id}`, { headers: { Authorization: `Bearer ${token}` } })
     fetchUsers()
-    alertMessage.value = `Представитель "${user.name}" деактивирован`
+    alertMessage.value = `Пользователь "${user.name}" переведён в неактивные`
     alertType.value = 'success'
   } catch (e) { 
     alertMessage.value = 'Ошибка деактивации: ' + (e.response?.data?.error || e.message)
@@ -1094,14 +1108,13 @@ const logout = () => {
 .form-actions-inline { display: flex; align-items: flex-end; }
 
 /* Таблица */
-.table-container { background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
-.data-table { width: 100%; border-collapse: collapse; }
+.table-container { background: white; border-radius: 12px; overflow-x: auto; overflow-y: hidden; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
+.data-table { width: 100%; min-width: 1180px; border-collapse: collapse; }
 .data-table th { background: #f8fafc; padding: 15px; text-align: left; font-weight: 600; color: #475569; border-bottom: 2px solid #e1e8ed; }
 .data-table td { padding: 15px; border-bottom: 1px solid #f1f5f9; }
 .data-table tbody tr:hover { background: #f8fafc; }
 
 .user-info { display: flex; align-items: center; gap: 12px; }
-.user-avatar { width: 40px; height: 40px; background: linear-gradient(135deg, #667eea, #764ba2); border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-weight: 600; }
 
 .role-badge, .status-badge { padding: 5px 12px; border-radius: 20px; font-size: 0.85rem; font-weight: 500; display: inline-block; }
 .role-badge.college_rep { background: #d1fae5; color: #059669; }
@@ -1128,6 +1141,7 @@ const logout = () => {
 
 .action-buttons { display: flex; gap: 8px; }
 .btn-icon { width: 36px; height: 36px; border: none; border-radius: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.3s; }
+.btn-icon:disabled { opacity: 0.45; cursor: not-allowed; }
 .btn-edit { background: #dbeafe; color: #2563eb; }
 .btn-edit:hover { background: #2563eb; color: white; }
 .btn-delete { background: #fef3c7; color: #d97706; }

@@ -59,6 +59,26 @@
               </div>
             </div>
 
+            <div class="grid">
+              <div class="form-group">
+                <label for="profile-passport">Паспортные данные</label>
+                <input id="profile-passport" v-model="profileForm.passport" type="text" class="form-control" readonly />
+              </div>
+              <div class="form-group">
+                <label for="profile-avg-score">Средний балл аттестата <span class="required">*</span></label>
+                <input
+                  id="profile-avg-score"
+                  v-model="profileForm.avg_score"
+                  type="number"
+                  min="2"
+                  max="5"
+                  step="0.01"
+                  class="form-control"
+                />
+                <p v-if="profileErrors.avg_score" class="field-error">{{ profileErrors.avg_score }}</p>
+              </div>
+            </div>
+
             <div class="actions">
               <button type="submit" class="btn-primary" :disabled="savingProfile">
                 {{ savingProfile ? 'Сохранение...' : 'Сохранить данные' }}
@@ -129,7 +149,7 @@
               <tr v-for="item in applications" :key="item.id">
                 <td>{{ item.college_name }}</td>
                 <td>{{ item.specialty_code }} - {{ item.specialty_name }}</td>
-                <td>{{ item.avg_score }}</td>
+                <td>{{ formatScore(item.avg_score) }}</td>
                 <td>{{ item.needs_dormitory ? 'Да' : 'Нет' }}</td>
                 <td>
                   <span class="status-badge" :class="statusClass(item.status)">
@@ -348,13 +368,16 @@ const changingPassword = ref(false)
 const profileForm = ref({
   name: '',
   email: '',
-  phone: ''
+  phone: '',
+  passport: '',
+  avg_score: ''
 })
 
 const profileErrors = ref({
   name: '',
   email: '',
-  phone: ''
+  phone: '',
+  avg_score: ''
 })
 
 const passwordForm = ref({
@@ -389,8 +412,8 @@ const collegeCompareRows = [
   { key: 'specialties_count', label: 'Количество специальностей', get: item => item.specialties_count || 0 },
   { key: 'budget', label: 'Бюджетные места по специальностям', get: item => item.budget_places || 0 },
   { key: 'commercial', label: 'Коммерческие места по специальностям', get: item => item.commercial_places || 0 },
-  { key: 'avg_score', label: 'Средний балл', get: item => item.avg_score || '-' },
-  { key: 'min_score', label: 'Минимальный балл', get: item => item.min_score || '-' },
+  { key: 'avg_score', label: 'Средний балл', get: item => formatScore(item.avg_score) },
+  { key: 'min_score', label: 'Минимальный балл', get: item => formatScore(item.min_score) },
   { key: 'professionalitet', label: 'Профессионалитет', get: item => item.is_professionalitet ? 'Да' : 'Нет' }
 ]
 
@@ -400,7 +423,7 @@ const specialtyCompareRows = [
   { key: 'duration', label: 'Срок обучения', get: item => item.duration || '-' },
   { key: 'base', label: 'База', get: item => formatBaseEducation(item.base_education) },
   { key: 'form', label: 'Форма', get: item => formatStudyForm(item.form) },
-  { key: 'score', label: 'Средний балл прошлого года', get: item => item.avg_score_last_year || '-' },
+  { key: 'score', label: 'Средний балл прошлого года', get: item => formatScore(item.avg_score_last_year) },
   { key: 'description', label: 'Описание', get: item => item.description || '-' }
 ]
 
@@ -411,6 +434,11 @@ const getToken = () => localStorage.getItem('authToken')
 const formatNumber = (value) => {
   const number = Number(value || 0)
   return Number.isFinite(number) ? number.toFixed(1) : '0.0'
+}
+
+const formatScore = (value) => {
+  const number = Number(value)
+  return Number.isFinite(number) ? number.toFixed(2) : '-'
 }
 
 const formatBaseEducation = (value) => {
@@ -507,7 +535,7 @@ const formatDate = (value) => {
 }
 
 const resetProfileErrors = () => {
-  profileErrors.value = { name: '', email: '', phone: '' }
+  profileErrors.value = { name: '', email: '', phone: '', avg_score: '' }
 }
 
 const validateProfile = () => {
@@ -522,6 +550,11 @@ const validateProfile = () => {
   }
   if (profileForm.value.phone?.trim() && !normalizeRussianPhone(profileForm.value.phone)) {
     profileErrors.value.phone = 'Телефон должен быть в российском формате'
+  }
+  const avgScore = Number(profileForm.value.avg_score)
+  const scaledAvgScore = Math.round(avgScore * 100)
+  if (!Number.isFinite(avgScore) || avgScore < 2 || avgScore > 5 || Math.abs(avgScore * 100 - scaledAvgScore) > 1e-8) {
+    profileErrors.value.avg_score = 'Средний балл должен быть от 2.00 до 5.00 с шагом 0.01'
   }
 
   return !Object.values(profileErrors.value).some(Boolean)
@@ -546,7 +579,9 @@ const loadProfile = async () => {
     profileForm.value = {
       name: user.name || '',
       email: user.email || '',
-      phone: user.phone ? formatRussianPhone(user.phone) : ''
+      phone: user.phone ? formatRussianPhone(user.phone) : '',
+      passport: `${user.passport_series || ''} ${user.passport_number || ''}`.trim(),
+      avg_score: formatScore(user.avg_score)
     }
 
     localStorage.setItem('user', JSON.stringify(user))
@@ -715,7 +750,8 @@ const saveProfile = async () => {
     const payload = {
       name: profileForm.value.name.trim(),
       email: profileForm.value.email.trim().toLowerCase(),
-      phone: profileForm.value.phone.trim() ? normalizeRussianPhone(profileForm.value.phone) : null
+      phone: profileForm.value.phone.trim() ? normalizeRussianPhone(profileForm.value.phone) : null,
+      avg_score: Number(profileForm.value.avg_score).toFixed(2)
     }
 
     const response = await axios.put(`${API_URL}/auth/me`, payload, {
@@ -726,6 +762,8 @@ const saveProfile = async () => {
     if (user) {
       localStorage.setItem('user', JSON.stringify(user))
       profileForm.value.phone = user.phone ? formatRussianPhone(user.phone) : ''
+      profileForm.value.passport = `${user.passport_series || ''} ${user.passport_number || ''}`.trim()
+      profileForm.value.avg_score = formatScore(user.avg_score)
     }
 
     profileMessage.value = 'Данные профиля обновлены'

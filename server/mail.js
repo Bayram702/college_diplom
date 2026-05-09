@@ -1,5 +1,7 @@
 // server/mail.js — отправка email
 const nodemailer = require('nodemailer')
+const fs = require('fs')
+const PDFDocument = require('pdfkit')
 
 // Создаём транспортёр один раз
 const getSmtpConfig = () => ({
@@ -23,6 +25,85 @@ const createTransporter = () => {
     }
   })
 }
+
+const escapeHtml = (value) => String(value ?? '')
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+
+const formatScore = (value) => {
+  const number = Number(value)
+  return Number.isFinite(number) ? number.toFixed(2) : '—'
+}
+
+const formatDate = (value) => {
+  if (!value) return '—'
+  return new Date(value).toLocaleString('ru-RU')
+}
+
+const getPdfFontPath = () => {
+  const candidates = [
+    'C:\\Windows\\Fonts\\arial.ttf',
+    'C:\\Windows\\Fonts\\calibri.ttf',
+    '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'
+  ]
+
+  return candidates.find((file) => fs.existsSync(file)) || null
+}
+
+const buildAcceptedApplicationPdf = (application) => new Promise((resolve, reject) => {
+  const doc = new PDFDocument({ size: 'A4', margin: 48 })
+  const chunks = []
+  const fontPath = getPdfFontPath()
+
+  doc.on('data', (chunk) => chunks.push(chunk))
+  doc.on('end', () => resolve(Buffer.concat(chunks)))
+  doc.on('error', reject)
+
+  if (fontPath) {
+    doc.font(fontPath)
+  }
+
+  const line = (label, value) => {
+    doc.fontSize(11).fillColor('#334155').text(label, { continued: true })
+    doc.fillColor('#111827').text(` ${value || '—'}`)
+  }
+
+  doc.fontSize(18).fillColor('#111827').text(application.college_name || 'Колледж', {
+    align: 'center'
+  })
+  doc.moveDown(1.2)
+  doc.fontSize(15).fillColor('#0054A6').text('Подтверждение принятия заявления', {
+    align: 'center'
+  })
+  doc.moveDown(1.5)
+
+  line('Номер заявления:', application.id)
+  line('Статус:', 'Принята')
+  line('Дата подачи:', formatDate(application.created_at))
+  line('Дата принятия:', formatDate(application.decided_at))
+  doc.moveDown(0.8)
+
+  line('ФИО абитуриента:', application.applicant_name)
+  line('Паспортные данные:', `${application.passport_series || ''} ${application.passport_number || ''}`.trim())
+  line('Средний балл аттестата:', formatScore(application.avg_score))
+  line('Телефон для обратной связи:', application.phone)
+  line('Email:', application.email)
+  line('Требуется общежитие:', application.needs_dormitory ? 'Да' : 'Нет')
+  doc.moveDown(0.8)
+
+  line('Колледж:', application.college_name)
+  line('Специальность:', `${application.specialty_code || ''} ${application.specialty_name || ''}`.trim())
+  doc.moveDown(1.5)
+
+  doc.fontSize(10).fillColor('#64748b').text(
+    'Документ сформирован автоматически порталом колледжей. Сохраните этот файл как подтверждение принятой заявки.',
+    { align: 'left' }
+  )
+
+  doc.end()
+})
 
 // Проверка, настроен ли SMTP
 const isConfigured = () => {
@@ -178,9 +259,58 @@ const sendRepresentativePasswordChangedEmail = async (toEmail, name, login, pass
   }
 }
 
+const sendAcceptedApplicationEmail = async (toEmail, application) => {
+  const pdf = await buildAcceptedApplicationPdf(application)
+
+  if (!isConfigured()) {
+    console.log('⚠️ SMTP не настроен. PDF принятой заявки сформирован, но письмо не отправлено.')
+    console.log(`  Email: ${toEmail}`)
+    console.log(`  Заявка: ${application.id}`)
+    return { success: false, reason: 'SMTP not configured', pdfGenerated: true }
+  }
+
+  try {
+    const config = getSmtpConfig()
+    const transporter = createTransporter()
+    const applicantName = application.applicant_name || 'абитуриент'
+    const collegeName = application.college_name || 'колледж'
+
+    const info = await transporter.sendMail({
+      from: `"Портал колледжей Башкортостана" <${config.user}>`,
+      to: toEmail,
+      subject: `Заявка №${application.id} принята`,
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+          <h2 style="color: #0054A6;">Здравствуйте, ${escapeHtml(applicantName)}!</h2>
+          <p>Ваша заявка №${escapeHtml(application.id)} принята колледжем «${escapeHtml(collegeName)}».</p>
+          <p>К письму приложен PDF-файл с полной информацией по принятой заявке.</p>
+        </div>
+      `,
+      attachments: [
+        {
+          filename: `accepted-application-${application.id}.pdf`,
+          content: pdf,
+          contentType: 'application/pdf'
+        }
+      ]
+    })
+
+    console.log(`✅ Письмо о принятии заявки отправлено на ${toEmail}, messageId: ${info.messageId}`)
+    return { success: true, messageId: info.messageId }
+  } catch (error) {
+    console.error('❌ Ошибка отправки письма о принятии заявки:', error)
+    return {
+      success: false,
+      error: error.response || error.message,
+      code: error.code || null
+    }
+  }
+}
+
 module.exports = {
   sendCredentialsEmail,
   sendPasswordResetCodeEmail,
   sendRepresentativePasswordChangedEmail,
+  sendAcceptedApplicationEmail,
   isConfigured
 }

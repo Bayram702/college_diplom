@@ -64,6 +64,36 @@
           </div>
 
           <div class="form-group">
+            <label for="passport">Паспортные данные <span class="required">*</span></label>
+            <input
+              v-model="form.passport"
+              @input="onPassportInput"
+              type="text"
+              id="passport"
+              class="form-control"
+              placeholder="0000 000000"
+              inputmode="numeric"
+              maxlength="11"
+              required
+            >
+          </div>
+
+          <div class="form-group">
+            <label for="avgScore">Средний балл аттестата <span class="required">*</span></label>
+            <input
+              v-model="form.avg_score"
+              type="number"
+              id="avgScore"
+              class="form-control"
+              min="2"
+              max="5"
+              step="0.01"
+              placeholder="4.67"
+              required
+            >
+          </div>
+
+          <div class="form-group">
             <label for="password">Пароль <span class="required">*</span></label>
             <div class="password-input-wrapper">
               <input
@@ -137,6 +167,8 @@ const form = ref({
   login: '',
   email: '',
   phone: '',
+  passport: '',
+  avg_score: '',
   password: '',
   passwordConfirm: '',
   agreeTerms: false
@@ -170,6 +202,18 @@ const handleRegister = async () => {
     return
   }
 
+  if (!/^\d{4}\s\d{6}$/.test(form.value.passport)) {
+    showAlert('Паспортные данные должны быть в формате 0000 000000', 'error')
+    return
+  }
+
+  const avgScore = Number(form.value.avg_score)
+  const scaledAvgScore = Math.round(avgScore * 100)
+  if (!Number.isFinite(avgScore) || avgScore < 2 || avgScore > 5 || Math.abs(avgScore * 100 - scaledAvgScore) > 1e-8) {
+    showAlert('Средний балл должен быть от 2.00 до 5.00 с шагом 0.01', 'error')
+    return
+  }
+
   registering.value = true
 
   try {
@@ -178,6 +222,8 @@ const handleRegister = async () => {
       login: form.value.login,
       email: form.value.email,
       phone: normalizedPhone,
+      passport: form.value.passport,
+      avg_score: (scaledAvgScore / 100).toFixed(2),
       password: form.value.password
     })
 
@@ -204,6 +250,15 @@ const handleRegister = async () => {
 
 const onPhoneInput = (event) => {
   form.value.phone = maskRussianPhoneInput(event?.target?.value || '')
+}
+
+const maskPassportInput = (value) => {
+  const digits = String(value || '').replace(/\D/g, '').slice(0, 10)
+  return digits.length > 4 ? `${digits.slice(0, 4)} ${digits.slice(4)}` : digits
+}
+
+const onPassportInput = (event) => {
+  form.value.passport = maskPassportInput(event?.target?.value || '')
 }
 </script>
 
@@ -258,6 +313,12 @@ const onPhoneInput = (event) => {
   display: flex;
   flex-direction: column;
   gap: 20px;
+}
+
+.form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
 }
 
 .form-group {
@@ -393,6 +454,10 @@ const onPhoneInput = (event) => {
 
   .register-header h1 {
     font-size: 1.5rem;
+  }
+
+  .form-row {
+    grid-template-columns: 1fr;
   }
 }
 </style>

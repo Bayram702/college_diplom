@@ -117,7 +117,7 @@
               
               <div class="average-score-container">
                 <span class="score-label">Средний балл аттестата:</span>
-                <span class="score-value">{{ specialty.avg_score || '—' }}</span>
+                <span class="score-value">{{ formatScore(specialty.avg_score) }}</span>
               </div>
             </div>
             
@@ -280,6 +280,11 @@ const stats = ref([
 
 const getToken = () => localStorage.getItem('authToken')
 
+const formatScore = (value) => {
+  const score = Number(value)
+  return Number.isFinite(score) ? score.toFixed(2) : '—'
+}
+
 const syncCurrentUser = () => {
   try {
     const raw = localStorage.getItem('user')
@@ -348,7 +353,7 @@ const loadStats = async () => {
       stats.value = [
         { id: 1, value: specStats.total_specialties || '—', label: 'Специальностей СПО' },
         { id: 2, value: colleges.active_colleges || '—', label: 'Колледжей и техникумов' },
-        { id: 3, value: specStats.avg_score_last_year || '—', label: 'Средний балл по всем специальностям' }
+        { id: 3, value: formatScore(specStats.avg_score_last_year), label: 'Средний балл по всем специальностям' }
       ]
     }
   } catch (error) {

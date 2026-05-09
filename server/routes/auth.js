@@ -29,6 +29,38 @@ const isValidEmail = (value) => {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
 };
 
+const normalizePassportSeries = (value) => {
+  if (typeof value !== 'string' && typeof value !== 'number') return '';
+  return String(value).replace(/\D/g, '').slice(0, 4);
+};
+
+const normalizePassportNumber = (value) => {
+  if (typeof value !== 'string' && typeof value !== 'number') return '';
+  return String(value).replace(/\D/g, '').slice(0, 6);
+};
+
+const normalizePassport = (value) => {
+  if (typeof value !== 'string' && typeof value !== 'number') return null;
+  const digits = String(value).replace(/\D/g, '');
+  if (digits.length !== 10) return null;
+
+  return {
+    series: digits.slice(0, 4),
+    number: digits.slice(4)
+  };
+};
+
+const parseAvgScore = (value) => {
+  const score = Number(value);
+  if (!Number.isFinite(score)) return null;
+  if (score < 2 || score > 5) return null;
+
+  const scaled = Math.round(score * 100);
+  if (Math.abs(score * 100 - scaled) > 1e-8) return null;
+
+  return Number((scaled / 100).toFixed(2));
+};
+
 const getTokenFromHeader = (req) => req.headers.authorization?.split(' ')[1] || null;
 
 const verifyToken = (token) => {
@@ -89,6 +121,9 @@ router.post('/login', async (req, res) => {
         u.login, 
         u.email, 
         u.phone,
+        u.passport_series,
+        u.passport_number,
+        u.avg_score,
         u.password_hash, 
         u.name, 
         u.role_id, 
@@ -194,7 +229,8 @@ router.post('/login', async (req, res) => {
     console.log('🕐 Обновление last_login_at...');
     await db.query(`
       UPDATE users 
-      SET last_login_at = CURRENT_TIMESTAMP 
+      SET last_login_at = CURRENT_TIMESTAMP,
+          last_activity_at = CURRENT_TIMESTAMP
       WHERE id = $1
     `, [user.id]);
     console.log('✅ last_login_at обновлён');
@@ -220,6 +256,9 @@ router.post('/login', async (req, res) => {
           login: user.login,
           email: user.email,
           phone: user.phone,
+          passport_series: user.passport_series,
+          passport_number: user.passport_number,
+          avg_score: user.avg_score,
           name: user.name,
           role: {
             id: user.role_id,
@@ -319,6 +358,9 @@ router.get('/me', async (req, res) => {
         u.login, 
         u.email, 
         u.phone,
+        u.passport_series,
+        u.passport_number,
+        u.avg_score,
         u.name, 
         u.role_id,
         u.college_id,
@@ -349,6 +391,8 @@ router.get('/me', async (req, res) => {
       console.log('❌ Пользователь не активен:', user.status);
       return res.status(401).json({ success: false, error: 'Аккаунт не активен' });
     }
+
+    await db.query('UPDATE users SET last_activity_at = CURRENT_TIMESTAMP WHERE id = $1', [user.id]);
     
     const responseData = {
       success: true,
@@ -358,6 +402,9 @@ router.get('/me', async (req, res) => {
           login: user.login,
           email: user.email,
           phone: user.phone,
+          passport_series: user.passport_series,
+          passport_number: user.passport_number,
+          avg_score: user.avg_score,
           name: user.name,
           role: {
             id: user.role_id,
@@ -394,16 +441,20 @@ router.post('/register-applicant', async (req, res) => {
   console.log('📝 === POST /api/auth/register-applicant START ===');
   
   try {
-    const { name, login, email, password, phone } = req.body;
+    const { name, login, email, password, phone, passport, passport_series, passport_number, avg_score } = req.body;
     const normalizedPhone = phone === null || phone === '' || phone === undefined
       ? null
       : normalizeRussianPhone(phone);
+    const normalizedPassport = normalizePassport(passport);
+    const normalizedPassportSeries = normalizedPassport?.series || normalizePassportSeries(passport_series);
+    const normalizedPassportNumber = normalizedPassport?.number || normalizePassportNumber(passport_number);
+    const parsedAvgScore = parseAvgScore(avg_score);
 
     // 1. Проверка наличия полей
-    if (!name || !login || !email || !password) {
+    if (!name || !login || !email || !password || (!passport && (!passport_series || !passport_number)) || avg_score === undefined || avg_score === null || avg_score === '') {
       return res.status(400).json({
         success: false,
-        error: 'Заполните все обязательные поля (имя, логин, email, пароль)'
+        error: 'Заполните все обязательные поля'
       });
     }
 
@@ -430,11 +481,37 @@ router.post('/register-applicant', async (req, res) => {
       });
     }
 
-    const checkQuery = `SELECT id, login, email FROM users WHERE login = $1 OR email = $2`;
-    const checkResult = await db.query(checkQuery, [login, email]);
+    if (normalizedPassportSeries.length !== 4 || normalizedPassportNumber.length !== 6) {
+      return res.status(400).json({
+        success: false,
+        error: 'Паспортные данные: серия 4 цифры, номер 6 цифр'
+      });
+    }
+
+    if (parsedAvgScore === null) {
+      return res.status(400).json({
+        success: false,
+        error: 'Средний балл должен быть от 2.00 до 5.00 с шагом 0.01'
+      });
+    }
+
+    const checkQuery = `
+      SELECT id, login, email, passport_series, passport_number
+      FROM users
+      WHERE login = $1
+         OR email = $2
+         OR (passport_series = $3 AND passport_number = $4)
+      LIMIT 1
+    `;
+    const checkResult = await db.query(checkQuery, [login, email, normalizedPassportSeries, normalizedPassportNumber]);
 
     if (checkResult.rows.length > 0) {
-      const existingField = checkResult.rows[0].login === login ? 'логином' : 'email';
+      const existingUser = checkResult.rows[0];
+      const existingField = existingUser.login === login
+        ? 'логином'
+        : existingUser.email === email
+          ? 'email'
+          : 'паспортными данными';
       return res.status(400).json({
         success: false,
         error: `Пользователь с таким ${existingField} уже существует`
@@ -460,13 +537,25 @@ router.post('/register-applicant', async (req, res) => {
 
     // 6. Создание пользователя
     const insertQuery = `
-      INSERT INTO users (login, email, password_hash, name, role_id, phone, status, created_at)
-      VALUES ($1, $2, $3, $4, $5, $6, 'active', CURRENT_TIMESTAMP)
-      RETURNING id, login, email, phone, name, role_id, status
+      INSERT INTO users (
+        login, email, password_hash, name, role_id, phone,
+        passport_series, passport_number, avg_score,
+        status, created_at
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'active', CURRENT_TIMESTAMP)
+      RETURNING id, login, email, phone, passport_series, passport_number, avg_score, name, role_id, status
     `;
 
     const result = await db.query(insertQuery, [
-      login, email, passwordHash, name, applicantRoleId, normalizedPhone
+      login,
+      email,
+      passwordHash,
+      name,
+      applicantRoleId,
+      normalizedPhone,
+      normalizedPassportSeries,
+      normalizedPassportNumber,
+      parsedAvgScore
     ]);
 
     const newUser = result.rows[0];
@@ -502,6 +591,9 @@ router.post('/register-applicant', async (req, res) => {
           login: newUser.login,
           email: newUser.email,
           phone: newUser.phone,
+          passport_series: newUser.passport_series,
+          passport_number: newUser.passport_number,
+          avg_score: newUser.avg_score,
           name: newUser.name,
           role: {
             id: newUser.role_id,
@@ -519,6 +611,13 @@ router.post('/register-applicant', async (req, res) => {
     console.error('❌ === POST /api/auth/register-applicant ERROR ===');
     console.error('❌ Ошибка:', error);
     console.error('📝 === POST /api/auth/register-applicant END (ERROR) ===\n');
+
+    if (error.code === '23505') {
+      return res.status(400).json({
+        success: false,
+        error: 'Пользователь с такими данными уже существует'
+      });
+    }
 
     res.status(500).json({
       success: false,
@@ -542,6 +641,9 @@ router.put('/me', async (req, res) => {
     const email = typeof req.body.email === 'string' ? req.body.email.trim().toLowerCase() : '';
     const rawPhone = req.body.phone;
     const phone = rawPhone === null || rawPhone === '' ? null : normalizeRussianPhone(rawPhone);
+    const parsedAvgScore = decoded.roleName === 'applicant'
+      ? parseAvgScore(req.body.avg_score)
+      : null;
 
     if (!name) {
       return res.status(400).json({ success: false, error: 'Укажите ФИО' });
@@ -553,6 +655,10 @@ router.put('/me', async (req, res) => {
 
     if (rawPhone !== null && rawPhone !== '' && !phone) {
       return res.status(400).json({ success: false, error: 'Телефон должен быть в российском формате (+7XXXXXXXXXX)' });
+    }
+
+    if (decoded.roleName === 'applicant' && parsedAvgScore === null) {
+      return res.status(400).json({ success: false, error: 'Средний балл должен быть от 2.00 до 5.00 с шагом 0.01' });
     }
 
     const duplicateEmail = await db.query(
@@ -567,11 +673,14 @@ router.put('/me', async (req, res) => {
     const updateResult = await db.query(
       `
       UPDATE users
-      SET name = $1, email = $2, phone = $3
+      SET name = $1,
+          email = $2,
+          phone = $3,
+          avg_score = CASE WHEN $5::numeric IS NULL THEN avg_score ELSE $5::numeric END
       WHERE id = $4
-      RETURNING id, login, email, phone, name, role_id, college_id
+      RETURNING id, login, email, phone, passport_series, passport_number, avg_score, name, role_id, college_id
       `,
-      [name, email, phone, userId]
+      [name, email, phone, userId, parsedAvgScore]
     );
 
     if (updateResult.rows.length === 0) {
@@ -579,6 +688,7 @@ router.put('/me', async (req, res) => {
     }
 
     const user = updateResult.rows[0];
+    await db.query('UPDATE users SET last_activity_at = CURRENT_TIMESTAMP WHERE id = $1', [userId]);
     const roleResult = await db.query('SELECT id, name FROM roles WHERE id = $1 LIMIT 1', [user.role_id]);
     const role = roleResult.rows[0] || { id: user.role_id, name: 'user' };
 
@@ -591,6 +701,9 @@ router.put('/me', async (req, res) => {
           login: user.login,
           email: user.email,
           phone: user.phone,
+          passport_series: user.passport_series,
+          passport_number: user.passport_number,
+          avg_score: user.avg_score,
           name: user.name,
           role: {
             id: role.id,
@@ -639,7 +752,7 @@ router.post('/admin/password', requireAuth, requireRole(['admin']), async (req, 
 
     const passwordHash = await bcrypt.hash(newPassword, 10);
     await db.query(
-      `UPDATE users SET password_hash = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
+      `UPDATE users SET password_hash = $1, updated_at = CURRENT_TIMESTAMP, last_activity_at = CURRENT_TIMESTAMP WHERE id = $2`,
       [passwordHash, req.user.userId]
     );
 
@@ -757,7 +870,9 @@ router.post('/password-change/confirm', requireAuth, requireRole(['applicant']),
       await client.query(
         `
         UPDATE users
-        SET password_hash = $1, updated_at = CURRENT_TIMESTAMP
+        SET password_hash = $1,
+            updated_at = CURRENT_TIMESTAMP,
+            last_activity_at = CURRENT_TIMESTAMP
         WHERE id = $2
         `,
         [passwordHash, req.user.userId]

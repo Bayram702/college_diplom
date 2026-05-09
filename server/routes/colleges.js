@@ -457,7 +457,7 @@ router.get('/stats', async (req, res) => {
             AND s.status = 'active'
             AND c.status = 'active'
         ), 0) as total_commercial_places,
-        COALESCE(ROUND(AVG(avg_score), 1), 0) as avg_score
+        COALESCE(ROUND(AVG(avg_score), 2), 0) as avg_score
       FROM colleges
     `);
 
@@ -683,7 +683,7 @@ router.get('/admin/list', requireAdmin, async (req, res) => {
       LEFT JOIN cities ci ON c.city_id = ci.id
       LEFT JOIN users u ON u.college_id = c.id AND u.role_id = (SELECT id FROM roles WHERE name = 'college_rep')
       WHERE c.status != 'deleted'
-      ORDER BY c.name
+      ORDER BY c.id ASC
     `;
 
     const result = await db.query(query);
@@ -757,8 +757,8 @@ router.get('/', requireAdmin, async (req, res) => {
     
     if (search) {
       query += ` AND (c.name ILIKE $${paramIndex} OR c.description ILIKE $${paramIndex})`;
-      params.push(`%${search}%`, `%${search}%`);
-      paramIndex += 2;
+      params.push(`%${search}%`);
+      paramIndex++;
     }
     
     if (city && city !== 'all') {
@@ -778,10 +778,10 @@ router.get('/', requireAdmin, async (req, res) => {
     const offset = (pageNum - 1) * limitNum;
     
     const countQuery = query.replace('SELECT c.*, ci.name as city_name', 'SELECT COUNT(*)').replace(', (SELECT COUNT(*) FROM college_specialties cs WHERE cs.college_id = c.id AND cs.is_active = true) as specialties_count, (SELECT COUNT(*) FROM users u WHERE u.college_id = c.id AND u.status = \'active\') as active_reps_count', '');
-    const countResult = await db.query(countQuery, params.slice(0, paramIndex - 2));
+    const countResult = await db.query(countQuery, params);
     const total = parseInt(countResult.rows[0].count);
     
-    query += ` ORDER BY c.name LIMIT $${paramIndex} OFFSET $${paramIndex}`;
+    query += ` ORDER BY c.id ASC LIMIT $${paramIndex++} OFFSET $${paramIndex}`;
     params.push(limitNum, offset);
     
     const result = await db.query(query, params);

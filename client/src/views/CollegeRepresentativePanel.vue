@@ -116,7 +116,7 @@
               <input 
                 v-model.number="collegeData.avg_score" 
                 type="number" 
-                step="0.1" 
+                step="0.01" 
                 id="avg-score" 
                 class="form-control" 
                 min="0" 
@@ -129,7 +129,7 @@
               <input 
                 v-model.number="collegeData.min_score" 
                 type="number" 
-                step="0.1" 
+                step="0.01" 
                 id="min-score" 
                 class="form-control" 
                 min="0" 
@@ -565,6 +565,7 @@
                 <td>
                   <div class="applicant-cell">
                     <div class="applicant-name">{{ application.applicant_name }}</div>
+                    <div class="applicant-meta">Паспорт: {{ application.passport_series }} {{ application.passport_number }}</div>
                     <div class="applicant-meta">{{ application.phone }}</div>
                     <div class="applicant-meta">{{ application.email }}</div>
                   </div>
@@ -572,7 +573,7 @@
                 <td>
                   {{ application.specialty_code }} — {{ application.specialty_name }}
                 </td>
-                <td>{{ Number(application.avg_score).toFixed(2) }}</td>
+                <td>{{ formatScore(application.avg_score) }}</td>
                 <td>{{ application.needs_dormitory ? 'Да' : 'Нет' }}</td>
                 <td>
                   <span class="status-badge" :class="getApplicationStatusClass(application.status)">
@@ -804,7 +805,7 @@
           
           <div class="form-group">
             <label>Средний балл аттестата (прошлый год)</label>
-            <input v-model.number="specialityForm.avg_score" type="number" step="0.1" class="form-control" min="0" max="5">
+            <input v-model.number="specialityForm.avg_score" type="number" step="0.01" class="form-control" min="0" max="5">
           </div>
           
           <div class="form-group">
@@ -1628,6 +1629,11 @@ const formatShortDate = (value) => {
 const formatDateTime = (value) => {
   if (!value) return '—'
   return new Date(value).toLocaleString('ru-RU')
+}
+
+const formatScore = (value) => {
+  const score = Number(value)
+  return Number.isFinite(score) ? score.toFixed(2) : '—'
 }
 
 const getStatusName = (s) => ({ active: 'Активна', inactive: 'Неактивна', draft: 'Черновик' }[s] || s)

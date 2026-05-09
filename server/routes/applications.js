@@ -1,6 +1,7 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
 const db = require('../db');
+const { sendAcceptedApplicationEmail } = require('../mail');
 
 const router = express.Router();
 
@@ -25,6 +26,11 @@ const normalizeRepresentativeRejectedApplications = async (collegeId) => {
     `,
     [collegeId]
   );
+};
+
+const touchUserActivity = async (userId, client = db) => {
+  if (!userId) return;
+  await client.query('UPDATE users SET last_activity_at = CURRENT_TIMESTAMP WHERE id = $1', [userId]);
 };
 
 const requireAuth = (req, res, next) => {
@@ -90,8 +96,6 @@ router.post('/', requireAuth, requireRole(['applicant']), async (req, res) => {
   const {
     college_id,
     specialty_id,
-    avg_score,
-    applicant_name,
     phone,
     email,
     needs_dormitory
@@ -99,8 +103,6 @@ router.post('/', requireAuth, requireRole(['applicant']), async (req, res) => {
 
   const collegeId = Number(college_id);
   const specialtyId = Number(specialty_id);
-  const parsedAvgScore = parseAvgScore(avg_score);
-  const applicantName = typeof applicant_name === 'string' ? applicant_name.trim() : '';
   const normalizedPhone = normalizeRussianPhone(phone);
   const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
 
@@ -117,10 +119,6 @@ router.post('/', requireAuth, requireRole(['applicant']), async (req, res) => {
     return res.status(400).json({ success: false, error: 'Некорректная специальность' });
   }
 
-  if (!applicantName) {
-    return res.status(400).json({ success: false, error: 'Укажите имя абитуриента' });
-  }
-
   if (!normalizedPhone) {
     return res.status(400).json({
       success: false,
@@ -130,13 +128,6 @@ router.post('/', requireAuth, requireRole(['applicant']), async (req, res) => {
 
   if (!isValidEmail(normalizedEmail)) {
     return res.status(400).json({ success: false, error: 'Некорректный email' });
-  }
-
-  if (parsedAvgScore === null) {
-    return res.status(400).json({
-      success: false,
-      error: 'Средний балл должен быть в диапазоне от 2.00 до 5.00 с шагом 0.01'
-    });
   }
 
   if (parsedNeedsDormitory === null) {
@@ -150,7 +141,25 @@ router.post('/', requireAuth, requireRole(['applicant']), async (req, res) => {
     await client.query('BEGIN');
 
     // Lock applicant row to reduce race conditions on 5-applications limit.
-    await client.query('SELECT id FROM users WHERE id = $1 FOR UPDATE', [applicantId]);
+    const applicantResult = await client.query(
+      `
+      SELECT id, name, passport_series, passport_number, avg_score
+      FROM users
+      WHERE id = $1
+      FOR UPDATE
+      `,
+      [applicantId]
+    );
+
+    const applicant = applicantResult.rows[0];
+    const applicantAvgScore = parseAvgScore(applicant?.avg_score);
+    if (!applicant?.name || !applicant?.passport_series || !applicant?.passport_number || applicantAvgScore === null) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        success: false,
+        error: 'В профиле абитуриента должны быть ФИО, паспортные данные и средний балл'
+      });
+    }
 
     const limitResult = await client.query(
       `SELECT COUNT(*)::int AS count
@@ -221,25 +230,31 @@ router.post('/', requireAuth, requireRole(['applicant']), async (req, res) => {
         college_id,
         specialty_id,
         applicant_name,
+        passport_series,
+        passport_number,
         phone,
         email,
         avg_score,
         needs_dormitory
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
       RETURNING id, status, created_at
       `,
       [
         applicantId,
         collegeId,
         specialtyId,
-        applicantName,
+        applicant.name,
+        applicant.passport_series,
+        applicant.passport_number,
         normalizedPhone,
         normalizedEmail,
-        parsedAvgScore,
+        applicantAvgScore,
         parsedNeedsDormitory
       ]
     );
+
+    await touchUserActivity(applicantId, client);
 
     await client.query('COMMIT');
 
@@ -283,6 +298,8 @@ router.get('/my', requireAuth, requireRole(['applicant']), async (req, res) => {
         a.id,
         a.status,
         a.avg_score,
+        a.passport_series,
+        a.passport_number,
         a.needs_dormitory,
         a.created_at,
         a.college_id,
@@ -357,15 +374,10 @@ router.get('/college', requireAuth, requireRole(['college_rep']), async (req, re
     }
 
     const orderBy = sortScore === 'asc'
-      ? 'a.avg_score ASC, a.created_at DESC'
+      ? 'a.avg_score ASC, a.id ASC'
       : sortScore === 'desc'
-        ? 'a.avg_score DESC, a.created_at DESC'
-        : `CASE a.status
-            WHEN 'pending' THEN 0
-            WHEN 'accepted' THEN 1
-            ELSE 2
-          END,
-          a.created_at DESC`;
+        ? 'a.avg_score DESC, a.id ASC'
+        : 'a.id ASC';
 
     const countResult = await db.query(
       `
@@ -386,6 +398,8 @@ router.get('/college', requireAuth, requireRole(['college_rep']), async (req, re
         a.phone,
         a.email,
         a.avg_score,
+        a.passport_series,
+        a.passport_number,
         a.needs_dormitory,
         a.status,
         a.created_at,
@@ -551,6 +565,8 @@ router.patch('/:id/cancel', requireAuth, requireRole(['applicant']), async (req,
       });
     }
 
+    await touchUserActivity(req.user.userId);
+
     return res.json({
       success: true,
       message: 'Заявка отменена',
@@ -607,10 +623,56 @@ router.patch('/:id/status', requireAuth, requireRole(['college_rep']), async (re
       });
     }
 
+    await touchUserActivity(req.user.userId);
+
+    let emailResult = null;
+    if (status === 'accepted') {
+      try {
+        const applicationResult = await db.query(
+          `
+          SELECT
+            a.id,
+            a.applicant_name,
+            a.passport_series,
+            a.passport_number,
+            a.phone,
+            a.email,
+            a.avg_score,
+            a.needs_dormitory,
+            a.status,
+            a.created_at,
+            a.decided_at,
+            c.name AS college_name,
+            s.code AS specialty_code,
+            s.name AS specialty_name
+          FROM applications a
+          JOIN colleges c ON c.id = a.college_id
+          JOIN specialties s ON s.id = a.specialty_id
+          WHERE a.id = $1
+          LIMIT 1
+          `,
+          [applicationId]
+        );
+
+        if (applicationResult.rows[0]?.email) {
+          emailResult = await sendAcceptedApplicationEmail(
+            applicationResult.rows[0].email,
+            applicationResult.rows[0]
+          );
+        }
+      } catch (emailError) {
+        console.error('Error sending accepted application email:', emailError);
+        emailResult = { success: false, error: emailError.message };
+      }
+    }
+
     return res.json({
       success: true,
       message: status === 'accepted' ? 'Заявка принята' : 'Заявка отклонена',
-      data: updateResult.rows[0]
+      data: {
+        ...updateResult.rows[0],
+        email: emailResult
+      }
     });
   } catch (error) {
     console.error('Error updating application status:', error);

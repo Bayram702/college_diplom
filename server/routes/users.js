@@ -174,13 +174,14 @@ router.get('/', requireAdmin, async (req, res) => {
     const dataQuery = `
       SELECT
         u.id, u.login, u.email, u.name, u.status, u.created_at, u.last_login_at,
+        COALESCE(u.last_activity_at, u.last_login_at, u.updated_at, u.created_at) AS last_activity_at,
         r.name as role_name, r.description as role_description,
         c.name as college_name, c.id as college_id
       FROM users u
       JOIN roles r ON u.role_id = r.id
       LEFT JOIN colleges c ON u.college_id = c.id
       ${whereClause}
-      ORDER BY u.created_at DESC
+      ORDER BY u.id ASC
       LIMIT $${paramIndex++} OFFSET $${paramIndex}
     `;
 
@@ -206,7 +207,8 @@ router.get('/', requireAdmin, async (req, res) => {
         name: row.college_name
       } : null,
       createdAt: row.created_at,
-      lastLoginAt: row.last_login_at
+      lastLoginAt: row.last_login_at,
+      lastActivityAt: row.last_activity_at
     }));
 
     res.json({
@@ -485,6 +487,8 @@ router.put('/:id', requireAdmin, async (req, res) => {
     if (updates.length === 1) {
       return res.status(400).json({ success: false, error: 'Нет данных для обновления' });
     }
+
+    updates.push(`last_activity_at = CURRENT_TIMESTAMP`);
     
     params.push(userId);
     
@@ -541,17 +545,18 @@ router.delete('/:id', requireAdmin, async (req, res) => {
     const result = await db.query(
       `UPDATE users u
        SET status = 'inactive', updated_at = CURRENT_TIMESTAMP
+           , last_activity_at = CURRENT_TIMESTAMP
        FROM roles r
        WHERE u.id = $1
          AND u.role_id = r.id
-         AND r.name = 'college_rep'
+         AND r.name IN ('college_rep', 'applicant')
          AND u.status != 'deleted'
-       RETURNING u.id, u.login, u.name`,
+       RETURNING u.id, u.login, u.name, r.name AS role_name`,
       [id]
     );
     
     if (result.rows.length === 0) {
-      return res.status(404).json({ success: false, error: 'Представитель колледжа не найден' });
+      return res.status(404).json({ success: false, error: 'Пользователь не найден или его нельзя деактивировать' });
     }
     
     // Аудит

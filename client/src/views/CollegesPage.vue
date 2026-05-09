@@ -177,11 +177,11 @@
                     <div class="stat-label">Коммерческих мест</div>
                   </div>
                   <div class="stat-item">
-                    <div class="stat-value">{{ college.avg_score || '—' }}</div>
+                    <div class="stat-value">{{ formatScore(college.avg_score) }}</div>
                     <div class="stat-label">Средний балл аттестата</div>
                   </div>
                   <div class="stat-item">
-                    <div class="stat-value">{{ college.min_score || '—' }}</div>
+                    <div class="stat-value">{{ formatScore(college.min_score) }}</div>
                     <div class="stat-label">Минимальный балл аттестата</div>
                   </div>
                 </div>
@@ -484,6 +484,11 @@ const formatRating = (value) => {
 }
 
 const formatNumber = (value) => Number(value || 0).toLocaleString('ru-RU')
+
+const formatScore = (value) => {
+  const score = Number(value)
+  return Number.isFinite(score) ? score.toFixed(2) : '—'
+}
 
 const handleScroll = () => {
   showBackToTop.value = window.pageYOffset > 300

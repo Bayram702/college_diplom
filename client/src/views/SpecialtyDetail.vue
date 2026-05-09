@@ -115,7 +115,7 @@
                   </div>
                   <div class="info-row">
                     <span class="info-label">Средний балл:</span>
-                    <span class="info-value">{{ college.avgScore || '—' }}</span>
+                    <span class="info-value">{{ formatScore(college.avgScore) }}</span>
                   </div>
                   <div class="info-row">
                     <span class="info-label">Профессионалитет:</span>
@@ -149,7 +149,7 @@
                       <td>{{ college.name }}</td>
                       <td>{{ college.budgetPlaces }}</td>
                       <td>{{ formatPrice(college.cost) }}</td>
-                      <td>{{ college.avgScore || '—' }}</td>
+                      <td>{{ formatScore(college.avgScore) }}</td>
                       <td>{{ college.isProfessionalitet ? 'Участвует' : 'Не участвует' }}</td>
                     </tr>
                   </tbody>
@@ -350,6 +350,11 @@ const fetchSpecialty = async () => {
 const formatPrice = (price) => {
   if (!price) return '—'
   return parseInt(price).toLocaleString('ru-RU')
+}
+
+const formatScore = (value) => {
+  const score = Number(value)
+  return Number.isFinite(score) ? score.toFixed(2) : '—'
 }
 
 const scrollToTop = () => {

@@ -119,7 +119,7 @@
                   <td>{{ formatBase(specialty.base_education) }}</td>
                   <td>{{ formatPrice(specialty.price_per_year) }}</td>
                   <td>{{ specialty.budget_places || 0 }}/{{ specialty.commercial_places || 0 }}</td>
-                  <td>{{ specialty.avg_score || specialty.avg_score_last_year || '—' }}</td>
+                  <td>{{ formatScore(specialty.avg_score || specialty.avg_score_last_year) || '—' }}</td>
                 </tr>
               </tbody>
             </table>
@@ -428,6 +428,7 @@
                   v-model="applicationForm.applicant_name"
                   type="text"
                   class="form-control"
+                  readonly
                   placeholder="Иванов Иван Иванович"
                 >
                 <p v-if="applicationFormErrors.applicant_name" class="field-error">
@@ -473,11 +474,24 @@
                   min="2"
                   max="5"
                   step="0.01"
+                  readonly
                   placeholder="4.25"
                 >
                 <p v-if="applicationFormErrors.avg_score" class="field-error">
                   {{ applicationFormErrors.avg_score }}
                 </p>
+              </div>
+            </div>
+
+            <div class="application-form-grid">
+              <div class="form-group">
+                <label>Паспортные данные <span class="required">*</span></label>
+                <input
+                  v-model="applicationForm.passport"
+                  type="text"
+                  class="form-control"
+                  readonly
+                >
               </div>
             </div>
 
@@ -588,6 +602,7 @@ const applicationForm = ref({
   phone: '',
   email: '',
   avg_score: '',
+  passport: '',
   specialty_id: '',
   needs_dormitory: false
 })
@@ -696,6 +711,11 @@ const parseAvgScore = (value) => {
   if (Math.abs(score * 100 - scaled) > 1e-8) return null
 
   return Number((scaled / 100).toFixed(2))
+}
+
+const formatScore = (value) => {
+  const score = Number(value)
+  return Number.isFinite(score) ? score.toFixed(2) : ''
 }
 
 const getAuthToken = () => localStorage.getItem('authToken')
@@ -905,10 +925,16 @@ const openApplicationModal = async () => {
   }
 
   applicationForm.value.applicant_name = currentUser.value.name || applicationForm.value.applicant_name
+  applicationForm.value.avg_score = formatScore(currentUser.value.avg_score)
+  applicationForm.value.passport = `${currentUser.value.passport_series || ''} ${currentUser.value.passport_number || ''}`.trim()
   applicationForm.value.email = currentUser.value.email || applicationForm.value.email
   applicationForm.value.phone = currentUser.value.phone
     ? formatRussianPhone(currentUser.value.phone)
     : applicationForm.value.phone
+
+  if (!applicationForm.value.applicant_name || !applicationForm.value.avg_score || !applicationForm.value.passport) {
+    applicationModalError.value = 'В профиле абитуриента должны быть ФИО, паспортные данные и средний балл'
+  }
 
   showApplicationModal.value = true
   await loadApplicantApplications()
@@ -983,8 +1009,6 @@ const submitApplication = async () => {
     const payload = {
       college_id: Number(college.value.id),
       specialty_id: Number(applicationForm.value.specialty_id),
-      avg_score: parseAvgScore(applicationForm.value.avg_score),
-      applicant_name: applicationForm.value.applicant_name.trim(),
       phone: normalizedPhone,
       email: applicationForm.value.email.trim().toLowerCase(),
       needs_dormitory: Boolean(applicationForm.value.needs_dormitory)
