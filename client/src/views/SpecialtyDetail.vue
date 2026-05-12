@@ -159,26 +159,6 @@
           </div>
         </section>
 
-        <!-- Перечень профессий -->
-        <section v-if="specialty.careers && specialty.careers.length > 0" class="section">
-          <div class="section-title">
-            <h2>Кем можно работать после обучения</h2>
-          </div>
-          <div class="info-grid">
-            <div class="info-card" v-for="(category, index) in specialty.careers" :key="index">
-              <img :src="category.image" :alt="category.title" class="info-card-image">
-              <div class="info-card-content">
-                <h3><i :class="category.icon"></i> {{ category.title }}</h3>
-                <ul class="list-items">
-                  <li v-for="(item, idx) in category.items" :key="idx">
-                    <i class="fas fa-check"></i> {{ item }}
-                  </li>
-                </ul>
-              </div>
-            </div>
-          </div>
-        </section>
-
         <!-- Перечень работодателей -->
         <section v-if="specialty.employers && specialty.employers.length > 0" class="section">
           <div class="section-title">

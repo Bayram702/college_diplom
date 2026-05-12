@@ -25,6 +25,7 @@ app.use('/api/settings', require('./routes/settings'));
 app.use('/api/applications', require('./routes/applications'));
 app.use('/api/favorites', require('./routes/favorites'));
 app.use('/api/reviews', require('./routes/reviews'));
+app.use('/api/gosuslugi', require('./routes/gosuslugi'));
 
 // API для представителя колледжа (ДО общего /api/colleges!)
 app.use('/api/colleges/specialties', require('./routes/rep-specialties'));

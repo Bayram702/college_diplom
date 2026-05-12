@@ -1,5 +1,14 @@
 <template>
   <div class="college-rep-panel">
+    <div class="panel-top-nav">
+      <router-link to="/sector" class="panel-nav-link">
+        <i class="fas fa-graduation-cap"></i> Специальности
+      </router-link>
+      <router-link to="/colleges" class="panel-nav-link">
+        <i class="fas fa-university"></i> Колледжи
+      </router-link>
+    </div>
+
     <!-- Основной контент -->
     <div class="container" style="padding-top: 20px;">
       <!-- Состояние загрузки -->
@@ -555,6 +564,7 @@
                 <th>Ср. балл</th>
                 <th>Общежитие</th>
                 <th>Статус</th>
+                <th>История</th>
                 <th>Действия</th>
               </tr>
             </thead>
@@ -579,6 +589,15 @@
                   <span class="status-badge" :class="getApplicationStatusClass(application.status)">
                     {{ getApplicationStatusName(application.status) }}
                   </span>
+                </td>
+                <td>
+                  <div class="history-list">
+                    <div v-for="entry in buildApplicationHistory(application)" :key="entry.key" class="history-item">
+                      <strong>{{ entry.label }}</strong>
+                      <span>{{ formatDateTime(entry.created_at) }}</span>
+                      <small v-if="entry.actor">{{ entry.actor }}</small>
+                    </div>
+                  </div>
                 </td>
                 <td>
                   <div class="action-buttons">
@@ -768,7 +787,12 @@
           <div class="settings-grid">
             <div class="form-group">
               <label>Срок обучения <span class="required">*</span></label>
-              <input v-model="specialityForm.duration" type="text" class="form-control" required>
+              <select v-model="specialityForm.duration" class="form-control" required>
+                <option value="" disabled>Выберите срок обучения</option>
+                <option value="3 года 10 месяцев">3 года 10 месяцев</option>
+                <option value="2 года 10 месяцев">2 года 10 месяцев</option>
+                <option value="1 год 10 месяцев">1 год 10 месяцев</option>
+              </select>
             </div>
             
             <div class="form-group">
@@ -1041,7 +1065,19 @@ const selectedSector = computed(() => {
 })
 
 const selectedSectorSpecialties = computed(() => {
-  const specialties = (selectedSector.value?.specialties || []).map(([code, name]) => ({ code, name }))
+  const specialties = (selectedSector.value?.specialties || [])
+    .map((specialty) => {
+      if (Array.isArray(specialty)) {
+        const [code, name] = specialty
+        return { code, name }
+      }
+
+      return {
+        code: specialty?.code || '',
+        name: specialty?.name || ''
+      }
+    })
+    .filter((specialty) => specialty.code && specialty.name)
   const hasCurrentSpecialty = specialties.some((item) => item.code === specialityForm.value.code)
 
   if (specialityForm.value.code && specialityForm.value.name && !hasCurrentSpecialty) {
@@ -1611,6 +1647,72 @@ const getApplicationStatusClass = (status) => ({
   cancelled: 'status-cancelled'
 }[status] || '')
 
+const getApplicationHistoryLabel = (entry) => {
+  if (entry.action === 'submitted') return 'Подана'
+  if (entry.action === 'cancelled') return 'Отменена'
+  if (entry.new_status === 'accepted') return 'Принята'
+  if (entry.new_status === 'rejected') return 'Отклонена'
+  return 'Изменена'
+}
+
+const buildApplicationHistory = (application) => {
+  const rawHistory = Array.isArray(application.history) ? application.history : []
+  const hasSubmitted = rawHistory.some((entry) => entry.action === 'submitted')
+  const hasFinalStatus = rawHistory.some((entry) => ['accepted', 'rejected', 'cancelled'].includes(entry.new_status))
+  const rows = [...rawHistory]
+
+  if (!hasSubmitted && application.created_at) {
+    rows.unshift({
+      action: 'submitted',
+      new_status: 'pending',
+      actor_name: application.applicant_name,
+      created_at: application.created_at
+    })
+  }
+
+  if (!hasFinalStatus && application.status === 'accepted' && application.decided_at) {
+    rows.push({
+      action: 'status_changed',
+      old_status: 'pending',
+      new_status: 'accepted',
+      actor_name: application.decided_by_name,
+      created_at: application.decided_at
+    })
+  }
+
+  if (!hasFinalStatus && application.status === 'cancelled' && application.updated_at) {
+    rows.push({
+      action: 'cancelled',
+      old_status: 'pending',
+      new_status: 'cancelled',
+      actor_name: application.applicant_name,
+      created_at: application.updated_at
+    })
+  }
+
+  return rows
+    .filter((entry) => entry.created_at)
+    .sort((a, b) => new Date(a.created_at) - new Date(b.created_at))
+    .map((entry, index) => ({
+      ...entry,
+      key: `${entry.id || entry.action}-${entry.created_at}-${index}`,
+      label: getApplicationHistoryLabel(entry),
+      actor: entry.actor_name || (entry.actor_user_id ? `ID ${entry.actor_user_id}` : '')
+    }))
+}
+
+const getCompetitionPlaceTypeName = (value) => ({
+  budget: 'Бюджет',
+  commercial: 'Платное',
+  outside: 'Вне мест'
+}[value] || value || '—')
+
+const getCompetitionChanceName = (value) => ({
+  high: 'Высокий',
+  medium: 'Средний',
+  low: 'Низкий'
+}[value] || '—')
+
 const maxDailyApplications = computed(() => {
   const days = applicationsAnalytics.value?.last7Days || []
   return Math.max(1, ...days.map((item) => Number(item.total) || 0))
@@ -1674,6 +1776,30 @@ onMounted(() => {
 </script>
 
 <style scoped>
+.panel-top-nav {
+  display: flex;
+  gap: 10px;
+  padding: 14px max(20px, calc((100% - 1200px) / 2)) 0;
+  background: #f5f7fa;
+}
+
+.panel-nav-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border: 1px solid #dbeafe;
+  border-radius: 8px;
+  background: #fff;
+  color: #0054a6;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.panel-nav-link:hover {
+  background: #eff6ff;
+}
+
 .stats-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -1949,6 +2075,25 @@ onMounted(() => {
 .applicant-meta {
   font-size: 0.84rem;
   color: #64748b;
+}
+
+.history-list {
+  display: grid;
+  gap: 8px;
+  min-width: 180px;
+}
+
+.history-item {
+  display: grid;
+  gap: 2px;
+  padding-left: 10px;
+  border-left: 2px solid #bfdbfe;
+  color: #64748b;
+  font-size: 0.82rem;
+}
+
+.history-item strong {
+  color: #1e293b;
 }
 
 .status-badge.status-pending {

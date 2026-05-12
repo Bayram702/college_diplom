@@ -13,16 +13,33 @@ if (!fs.existsSync(collegeImagesDir)) {
   fs.mkdirSync(collegeImagesDir, { recursive: true });
 }
 
+const applicationDocumentsDir = path.join(uploadsDir, 'application-documents');
+if (!fs.existsSync(applicationDocumentsDir)) {
+  fs.mkdirSync(applicationDocumentsDir, { recursive: true });
+}
+
+const APPLICATION_DOCUMENT_TYPES = ['passport', 'certificate', 'snils', 'consent'];
+
+const isAllowedApplicationDocumentType = (documentType) => APPLICATION_DOCUMENT_TYPES.includes(documentType);
+
 // Конфигурация хранилища
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
+    if (req.uploadTarget === 'application-document') {
+      cb(null, applicationDocumentsDir);
+      return;
+    }
+
     cb(null, collegeImagesDir);
   },
   filename: function (req, file, cb) {
     // Генерируем уникальное имя файла: college-{timestamp}-{random}.{ext}
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
     const ext = path.extname(file.originalname);
-    const fileName = `college-${uniqueSuffix}${ext}`;
+    const prefix = req.uploadTarget === 'application-document'
+      ? `application-${req.user?.userId || 'user'}-${req.body.documentType || 'document'}`
+      : 'college';
+    const fileName = `${prefix}-${uniqueSuffix}${ext}`;
     
     // Сохраняем имя файла в запросе для дальнейшего использования
     req.uploadedFileName = fileName;
@@ -33,7 +50,9 @@ const storage = multer.diskStorage({
 
 // Фильтр файлов - разрешаем только изображения
 const fileFilter = (req, file, cb) => {
-  const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
+  const allowedTypes = req.uploadTarget === 'application-document'
+    ? ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'application/pdf']
+    : ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
   
   if (allowedTypes.includes(file.mimetype)) {
     cb(null, true);
@@ -50,5 +69,8 @@ const upload = multer({
   },
   fileFilter: fileFilter
 });
+
+upload.APPLICATION_DOCUMENT_TYPES = APPLICATION_DOCUMENT_TYPES;
+upload.isAllowedApplicationDocumentType = isAllowedApplicationDocumentType;
 
 module.exports = upload;

@@ -1,6 +1,24 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../db');
+const jwt = require('jsonwebtoken');
+
+const requireAdmin = (req, res, next) => {
+  try {
+    const token = req.headers.authorization?.split(' ')[1];
+    if (!token) return res.status(401).json({ success: false, error: 'Требуется авторизация' });
+
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
+    if (decoded.roleName !== 'admin') {
+      return res.status(403).json({ success: false, error: 'Доступ запрещён' });
+    }
+
+    req.user = decoded;
+    return next();
+  } catch (error) {
+    return res.status(401).json({ success: false, error: 'Недействительный токен' });
+  }
+};
 
 const normalizeSectorCode = (value) => {
   const raw = String(value || '').trim();
@@ -266,7 +284,7 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-router.post('/', async (req, res) => {
+router.post('/', requireAdmin, async (req, res) => {
   try {
     const { name, code, description, image_url, sort_order } = req.body;
     const normalizedCode = normalizeSectorCode(code);
@@ -291,7 +309,7 @@ router.post('/', async (req, res) => {
   }
 });
 
-router.put('/:id', async (req, res) => {
+router.put('/:id', requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const { name, code, description, image_url, sort_order, is_active } = req.body;
@@ -339,7 +357,7 @@ router.put('/:id', async (req, res) => {
   }
 });
 
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
 

@@ -2,6 +2,24 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../db');
+const jwt = require('jsonwebtoken');
+
+const requireAdmin = (req, res, next) => {
+  try {
+    const token = req.headers.authorization?.split(' ')[1];
+    if (!token) return res.status(401).json({ success: false, error: 'Требуется авторизация' });
+
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
+    if (decoded.roleName !== 'admin') {
+      return res.status(403).json({ success: false, error: 'Доступ запрещён' });
+    }
+
+    req.user = decoded;
+    return next();
+  } catch (error) {
+    return res.status(401).json({ success: false, error: 'Недействительный токен' });
+  }
+};
 
 // Получить все настройки сайта (публичный endpoint)
 router.get('/', async (req, res) => {
@@ -67,7 +85,7 @@ router.get('/:key', async (req, res) => {
 });
 
 // Обновить настройку (admin)
-router.put('/:key', async (req, res) => {
+router.put('/:key', requireAdmin, async (req, res) => {
   try {
     const { key } = req.params;
     const { value, description } = req.body;

@@ -1049,8 +1049,8 @@ const fetchCollege = async () => {
       if (response.data.data.opportunities) {
         opportunities.value = response.data.data.opportunities
       }
-      if (response.data.data.employers) {
-        careers.value = response.data.data.employers
+      if (response.data.data.professions) {
+        careers.value = response.data.data.professions
       }
       
       // Инициализируем карту после загрузки данных

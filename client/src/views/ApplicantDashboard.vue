@@ -57,6 +57,10 @@
                 />
                 <p v-if="profileErrors.phone" class="field-error">{{ profileErrors.phone }}</p>
               </div>
+              <div class="form-group">
+                <label for="profile-snils">СНИЛС</label>
+                <input id="profile-snils" v-model="profileForm.snils" type="text" class="form-control" readonly />
+              </div>
             </div>
 
             <div class="grid">
@@ -85,6 +89,58 @@
               </button>
             </div>
           </form>
+        </section>
+
+        <section class="dashboard-card">
+          <div class="applications-header">
+            <div>
+              <h2>Документы к заявке</h2>
+              <p class="applications-meta">Паспорт, аттестат, СНИЛС и согласие на обработку данных</p>
+            </div>
+            <button
+              type="button"
+              class="btn-secondary"
+              @click="loadGosuslugiProfile"
+              :disabled="gosuslugiLoading"
+            >
+              {{ gosuslugiLoading ? 'Загрузка...' : 'Данные из Госуслуг' }}
+            </button>
+          </div>
+
+          <p v-if="documentMessage" :class="['notice', documentMessageType === 'error' ? 'is-error' : 'is-success']">
+            {{ documentMessage }}
+          </p>
+
+          <div v-if="!hasPersonalDataConsent" class="consent-banner">
+            <div>
+              <strong>Нужно согласие на обработку персональных данных</strong>
+              <p>Без согласия загрузка документов и получение данных из Госуслуг недоступны.</p>
+            </div>
+            <button type="button" class="btn-primary" @click="acceptPersonalDataConsent">Принять</button>
+          </div>
+
+          <div class="documents-grid">
+            <article v-for="documentItem in applicationDocuments" :key="documentItem.type" class="document-card">
+              <div>
+                <h3>{{ documentItem.label }}</h3>
+                <p>{{ documentItem.hint }}</p>
+              </div>
+              <div class="document-upload-row">
+                <label class="document-upload-button">
+                  <input
+                    type="file"
+                    accept=".pdf,image/jpeg,image/png,image/webp"
+                    :disabled="!hasPersonalDataConsent || uploadingDocumentType === documentItem.type"
+                    @change="uploadApplicationDocument(documentItem.type, $event)"
+                  />
+                  <span>{{ uploadingDocumentType === documentItem.type ? 'Загрузка...' : 'Выбрать файл' }}</span>
+                </label>
+                <span v-if="uploadedDocuments[documentItem.type]" class="document-status">
+                  {{ uploadedDocuments[documentItem.type].originalName }}
+                </span>
+              </div>
+            </article>
+          </div>
         </section>
 
         <section class="dashboard-card">
@@ -142,6 +198,7 @@
                 <th>Общежитие</th>
                 <th>Статус</th>
                 <th>Дата подачи</th>
+                <th>История</th>
                 <th>Действия</th>
               </tr>
             </thead>
@@ -157,6 +214,15 @@
                   </span>
                 </td>
                 <td>{{ formatDate(item.created_at) }}</td>
+                <td>
+                  <div class="history-list">
+                    <div v-for="entry in buildApplicationHistory(item)" :key="entry.key" class="history-item">
+                      <strong>{{ entry.label }}</strong>
+                      <span>{{ formatDate(entry.created_at) }}</span>
+                      <small v-if="entry.actor">{{ entry.actor }}</small>
+                    </div>
+                  </div>
+                </td>
                 <td>
                   <button
                     v-if="item.status === 'pending'"
@@ -328,6 +394,101 @@
         </section>
       </template>
     </div>
+
+    <div v-if="showConsentModal" class="consent-overlay" @click.self="showConsentModal = false">
+      <div class="consent-modal">
+        <h2>Согласие на обработку данных</h2>
+        <p>
+          Для загрузки документов и получения сведений из Госуслуг нужно подтвердить согласие
+          на обработку персональных данных в рамках подачи заявки.
+        </p>
+        <div class="consent-actions">
+          <button type="button" class="btn-primary" @click="acceptPersonalDataConsent">Согласен</button>
+          <button type="button" class="btn-secondary" @click="showConsentModal = false">Позже</button>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="showCompetitionModal" class="competition-overlay" @click.self="closeCompetitionModal">
+      <div class="competition-modal">
+        <button class="competition-close" type="button" @click="closeCompetitionModal">&times;</button>
+        <div class="applications-header">
+          <div>
+            <h2>Конкурсный рейтинг</h2>
+            <p v-if="competitionData" class="applications-meta">
+              {{ competitionData.specialty.code }} - {{ competitionData.specialty.name }}
+            </p>
+          </div>
+        </div>
+
+        <div v-if="competitionLoading" class="loading-state">Загрузка конкурса...</div>
+        <div v-else-if="competitionError" class="notice is-error">{{ competitionError }}</div>
+        <template v-else-if="competitionData">
+          <div class="competition-summary">
+            <div class="competition-summary-card is-primary">
+              <span>Ваше место</span>
+              <strong v-if="competitionData.myApplication">
+                {{ competitionData.myApplication.rank }} из {{ competitionData.stats.applications_count }}
+              </strong>
+              <strong v-else>-</strong>
+            </div>
+            <div class="competition-summary-card">
+              <span>Бюджетные места</span>
+              <strong>{{ competitionData.places.budget || 'Не указано' }}</strong>
+            </div>
+            <div class="competition-summary-card">
+              <span>Платные места</span>
+              <strong>{{ competitionData.places.commercial || 'Не указано' }}</strong>
+            </div>
+            <div class="competition-summary-card">
+              <span>Проходной прошлого года</span>
+              <strong>{{ formatScore(competitionData.stats.last_year_threshold) }}</strong>
+            </div>
+            <div class="competition-summary-card">
+              <span>Текущий бюджетный порог</span>
+              <strong>{{ formatScore(competitionData.stats.current_budget_threshold) }}</strong>
+            </div>
+            <div class="competition-summary-card">
+              <span>Шанс</span>
+              <strong>{{ getChanceLabel(competitionData.myApplication?.chance) }}</strong>
+            </div>
+          </div>
+
+          <div class="table-wrapper competition-table-wrapper">
+            <table class="applications-table">
+              <thead>
+                <tr>
+                  <th>Место</th>
+                  <th>Абитуриент</th>
+                  <th>Балл</th>
+                  <th>Тип места</th>
+                  <th>Статус</th>
+                  <th>Шанс</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="row in competitionData.ranking" :key="row.application_id" :class="{ 'is-mine': row.is_mine }">
+                  <td>{{ row.rank }}</td>
+                  <td>{{ row.applicant_label }}</td>
+                  <td>{{ formatScore(row.avg_score) }}</td>
+                  <td>{{ getPlaceTypeLabel(row.place_type) }}</td>
+                  <td>
+                    <span class="status-badge" :class="statusClass(row.status)">
+                      {{ statusLabel(row.status) }}
+                    </span>
+                  </td>
+                  <td>
+                    <span class="chance-badge" :class="`chance-${row.chance}`">
+                      {{ getChanceLabel(row.chance) }}
+                    </span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </template>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -338,6 +499,14 @@ import { maskRussianPhoneInput, normalizeRussianPhone, formatRussianPhone } from
 import { resolveImageUrl } from '../utils/images'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000/api'
+const PERSONAL_DATA_CONSENT_KEY = 'applicantPersonalDataConsent'
+
+const applicationDocuments = [
+  { type: 'passport', label: 'Паспорт', hint: 'Разворот с фото и данными' },
+  { type: 'certificate', label: 'Аттестат', hint: 'Скан или PDF документа об образовании' },
+  { type: 'snils', label: 'СНИЛС', hint: 'Скан СНИЛС или подтверждение номера' },
+  { type: 'consent', label: 'Согласие', hint: 'Подписанное согласие на обработку данных' }
+]
 
 const tabs = [
   { id: 'profile', label: 'Личная информация', icon: 'fas fa-user' },
@@ -364,11 +533,19 @@ const reviewsMessage = ref('')
 const reviewsMessageType = ref('success')
 const requestingPasswordCode = ref(false)
 const changingPassword = ref(false)
+const documentMessage = ref('')
+const documentMessageType = ref('success')
+const gosuslugiLoading = ref(false)
+const uploadingDocumentType = ref('')
+const uploadedDocuments = ref({})
+const hasPersonalDataConsent = ref(localStorage.getItem(PERSONAL_DATA_CONSENT_KEY) === 'accepted')
+const showConsentModal = ref(!hasPersonalDataConsent.value)
 
 const profileForm = ref({
   name: '',
   email: '',
   phone: '',
+  snils: '',
   passport: '',
   avg_score: ''
 })
@@ -430,6 +607,90 @@ const specialtyCompareRows = [
 const activeCompareRows = computed(() => compareType.value === 'college' ? collegeCompareRows : specialtyCompareRows)
 
 const getToken = () => localStorage.getItem('authToken')
+
+const acceptPersonalDataConsent = () => {
+  localStorage.setItem(PERSONAL_DATA_CONSENT_KEY, 'accepted')
+  hasPersonalDataConsent.value = true
+  showConsentModal.value = false
+  documentMessage.value = 'Согласие принято'
+  documentMessageType.value = 'success'
+}
+
+const ensurePersonalDataConsent = () => {
+  if (hasPersonalDataConsent.value) return true
+
+  showConsentModal.value = true
+  documentMessage.value = 'Сначала подтвердите согласие на обработку персональных данных'
+  documentMessageType.value = 'error'
+  return false
+}
+
+const loadGosuslugiProfile = async () => {
+  if (!ensurePersonalDataConsent()) return
+
+  const token = getToken()
+  if (!token) return
+
+  gosuslugiLoading.value = true
+  documentMessage.value = ''
+  try {
+    const response = await axios.get(`${API_URL}/gosuslugi/profile`, {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+    const profile = response.data?.data
+    if (!profile) return
+
+    profileForm.value.name = profile.name || profileForm.value.name
+    profileForm.value.email = profile.email || profileForm.value.email
+    profileForm.value.phone = profile.phone ? formatRussianPhone(profile.phone) : profileForm.value.phone
+    profileForm.value.snils = profile.snils || profileForm.value.snils
+    profileForm.value.passport = `${profile.passport_series || ''} ${profile.passport_number || ''}`.trim() || profileForm.value.passport
+    documentMessage.value = 'Данные из Госуслуг загружены'
+    documentMessageType.value = 'success'
+  } catch (error) {
+    documentMessage.value = error.response?.data?.error || 'Не удалось получить данные из Госуслуг'
+    documentMessageType.value = 'error'
+  } finally {
+    gosuslugiLoading.value = false
+  }
+}
+
+const uploadApplicationDocument = async (documentType, event) => {
+  const file = event?.target?.files?.[0]
+  if (!file) return
+
+  if (!ensurePersonalDataConsent()) {
+    event.target.value = ''
+    return
+  }
+
+  const token = getToken()
+  if (!token) return
+
+  const formData = new FormData()
+  formData.append('documentType', documentType)
+  formData.append('document', file)
+
+  uploadingDocumentType.value = documentType
+  documentMessage.value = ''
+  try {
+    const response = await axios.post(`${API_URL}/upload/application-document`, formData, {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+    uploadedDocuments.value = {
+      ...uploadedDocuments.value,
+      [documentType]: response.data?.data || { originalName: file.name }
+    }
+    documentMessage.value = 'Документ загружен'
+    documentMessageType.value = 'success'
+  } catch (error) {
+    documentMessage.value = error.response?.data?.error || 'Не удалось загрузить документ'
+    documentMessageType.value = 'error'
+  } finally {
+    uploadingDocumentType.value = ''
+    event.target.value = ''
+  }
+}
 
 const formatNumber = (value) => {
   const number = Number(value || 0)
@@ -534,6 +795,60 @@ const formatDate = (value) => {
   return new Date(value).toLocaleString('ru-RU')
 }
 
+const applicationHistoryLabel = (entry) => {
+  if (entry.action === 'submitted') return 'Подана'
+  if (entry.action === 'cancelled') return 'Отменена'
+  if (entry.new_status === 'accepted') return 'Принята'
+  if (entry.new_status === 'rejected') return 'Отклонена'
+  return 'Изменена'
+}
+
+const buildApplicationHistory = (application) => {
+  const rawHistory = Array.isArray(application.history) ? application.history : []
+  const hasSubmitted = rawHistory.some((entry) => entry.action === 'submitted')
+  const hasFinalStatus = rawHistory.some((entry) => ['accepted', 'rejected', 'cancelled'].includes(entry.new_status))
+  const rows = [...rawHistory]
+
+  if (!hasSubmitted && application.created_at) {
+    rows.unshift({
+      action: 'submitted',
+      new_status: 'pending',
+      actor_name: 'Вы',
+      created_at: application.created_at
+    })
+  }
+
+  if (!hasFinalStatus && application.status === 'accepted' && application.decided_at) {
+    rows.push({
+      action: 'status_changed',
+      old_status: 'pending',
+      new_status: 'accepted',
+      actor_name: application.decided_by_name,
+      created_at: application.decided_at
+    })
+  }
+
+  if (!hasFinalStatus && application.status === 'cancelled' && application.updated_at) {
+    rows.push({
+      action: 'cancelled',
+      old_status: 'pending',
+      new_status: 'cancelled',
+      actor_name: 'Вы',
+      created_at: application.updated_at
+    })
+  }
+
+  return rows
+    .filter((entry) => entry.created_at)
+    .sort((a, b) => new Date(a.created_at) - new Date(b.created_at))
+    .map((entry, index) => ({
+      ...entry,
+      key: `${entry.id || entry.action}-${entry.created_at}-${index}`,
+      label: applicationHistoryLabel(entry),
+      actor: entry.actor_name || (entry.actor_user_id ? `ID ${entry.actor_user_id}` : '')
+    }))
+}
+
 const resetProfileErrors = () => {
   profileErrors.value = { name: '', email: '', phone: '', avg_score: '' }
 }
@@ -580,6 +895,7 @@ const loadProfile = async () => {
       name: user.name || '',
       email: user.email || '',
       phone: user.phone ? formatRussianPhone(user.phone) : '',
+      snils: '',
       passport: `${user.passport_series || ''} ${user.passport_number || ''}`.trim(),
       avg_score: formatScore(user.avg_score)
     }
@@ -859,6 +1175,110 @@ h2 {
   background: var(--primary-blue);
   color: #fff;
   box-shadow: 0 8px 18px rgba(0, 84, 166, 0.18);
+}
+
+.consent-banner {
+  margin-top: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid #bfdbfe;
+  border-radius: 10px;
+  background: #eff6ff;
+}
+
+.consent-banner p {
+  margin: 4px 0 0;
+  color: var(--text-light);
+}
+
+.documents-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.document-card {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.document-card h3,
+.document-card p {
+  margin: 0;
+}
+
+.document-card p,
+.document-status {
+  color: var(--text-light);
+}
+
+.document-upload-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.document-upload-button input {
+  display: none;
+}
+
+.document-upload-button span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 38px;
+  padding: 8px 12px;
+  border: 1px solid #c7d2fe;
+  border-radius: 8px;
+  color: #1e40af;
+  background: #eef2ff;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.document-upload-button input:disabled + span {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.consent-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  background: rgba(15, 23, 42, 0.62);
+}
+
+.consent-modal {
+  width: min(520px, 100%);
+  padding: 22px;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 20px 50px rgba(15, 23, 42, 0.25);
+}
+
+.consent-modal p {
+  margin: 12px 0 0;
+  color: var(--text-light);
+  line-height: 1.6;
+}
+
+.consent-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 18px;
 }
 
 .grid {
@@ -1152,6 +1572,29 @@ h2 {
   color: var(--text-light);
 }
 
+.history-list {
+  display: grid;
+  gap: 8px;
+  min-width: 180px;
+}
+
+.history-item {
+  display: grid;
+  gap: 2px;
+  padding-left: 10px;
+  border-left: 2px solid #bfdbfe;
+  color: var(--text-light);
+  font-size: 0.82rem;
+}
+
+.history-item strong {
+  color: var(--text-dark);
+}
+
+.history-item small {
+  color: #64748b;
+}
+
 .reviews-grid {
   display: grid;
   gap: 14px;
@@ -1213,8 +1656,14 @@ h2 {
 
 @media (max-width: 768px) {
   .grid,
+  .documents-grid,
   .favorites-layout {
     grid-template-columns: 1fr;
+  }
+
+  .consent-banner {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .dashboard-tab {

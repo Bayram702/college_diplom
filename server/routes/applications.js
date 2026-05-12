@@ -9,6 +9,47 @@ const MAX_APPLICATIONS_PER_APPLICANT = 5;
 const ALLOWED_APPLICATION_STATUSES = ['pending', 'accepted', 'rejected', 'cancelled'];
 const ALLOWED_DECISION_STATUSES = ['accepted'];
 
+const applicationHistorySelect = `
+  COALESCE((
+    SELECT jsonb_agg(
+      jsonb_build_object(
+        'id', ah.id,
+        'action', ah.action,
+        'old_status', ah.old_status,
+        'new_status', ah.new_status,
+        'actor_user_id', ah.actor_user_id,
+        'actor_name', ah.actor_name,
+        'comment', ah.comment,
+        'created_at', ah.created_at
+      )
+      ORDER BY ah.created_at ASC, ah.id ASC
+    )
+    FROM application_history ah
+    WHERE ah.application_id = a.id
+  ), '[]'::jsonb) AS history
+`;
+
+const insertApplicationHistory = async (
+  client,
+  { applicationId, action, oldStatus = null, newStatus, actorUserId = null, actorName = null, comment = null }
+) => {
+  await client.query(
+    `
+    INSERT INTO application_history (
+      application_id,
+      action,
+      old_status,
+      new_status,
+      actor_user_id,
+      actor_name,
+      comment
+    )
+    VALUES ($1, $2, $3, $4, $5, $6, $7)
+    `,
+    [applicationId, action, oldStatus, newStatus, actorUserId, actorName, comment]
+  );
+};
+
 const normalizeRepresentativeRejectedApplications = async (collegeId) => {
   await db.query(
     `
@@ -254,6 +295,14 @@ router.post('/', requireAuth, requireRole(['applicant']), async (req, res) => {
       ]
     );
 
+    await insertApplicationHistory(client, {
+      applicationId: insertResult.rows[0].id,
+      action: 'submitted',
+      newStatus: insertResult.rows[0].status,
+      actorUserId: applicantId,
+      actorName: applicant.name
+    });
+
     await touchUserActivity(applicantId, client);
 
     await client.query('COMMIT');
@@ -302,14 +351,20 @@ router.get('/my', requireAuth, requireRole(['applicant']), async (req, res) => {
         a.passport_number,
         a.needs_dormitory,
         a.created_at,
+        a.updated_at,
+        a.decided_at,
+        a.decided_by,
         a.college_id,
         a.specialty_id,
         c.name AS college_name,
         s.name AS specialty_name,
-        s.code AS specialty_code
+        s.code AS specialty_code,
+        u.name AS decided_by_name,
+        ${applicationHistorySelect}
       FROM applications a
       JOIN colleges c ON c.id = a.college_id
       JOIN specialties s ON s.id = a.specialty_id
+      LEFT JOIN users u ON u.id = a.decided_by
       WHERE a.applicant_id = $1
       ORDER BY a.created_at DESC
       `,
@@ -408,7 +463,8 @@ router.get('/college', requireAuth, requireRole(['college_rep']), async (req, re
         a.decided_by,
         s.name AS specialty_name,
         s.code AS specialty_code,
-        u.name AS decided_by_name
+        u.name AS decided_by_name,
+        ${applicationHistorySelect}
       FROM applications a
       JOIN specialties s ON s.id = a.specialty_id
       LEFT JOIN users u ON u.id = a.decided_by
@@ -538,6 +594,7 @@ router.get('/college/analytics', requireAuth, requireRole(['college_rep']), asyn
 });
 
 router.patch('/:id/cancel', requireAuth, requireRole(['applicant']), async (req, res) => {
+  const client = await db.connect();
   try {
     const applicationId = Number(req.params.id);
 
@@ -545,7 +602,9 @@ router.patch('/:id/cancel', requireAuth, requireRole(['applicant']), async (req,
       return res.status(400).json({ success: false, error: 'Некорректный идентификатор заявки' });
     }
 
-    const updateResult = await db.query(
+    await client.query('BEGIN');
+
+    const updateResult = await client.query(
       `
       UPDATE applications
       SET status = 'cancelled',
@@ -553,19 +612,30 @@ router.patch('/:id/cancel', requireAuth, requireRole(['applicant']), async (req,
       WHERE id = $1
         AND applicant_id = $2
         AND status = 'pending'
-      RETURNING id, status, updated_at
+      RETURNING id, status, updated_at, applicant_name
       `,
       [applicationId, req.user.userId]
     );
 
     if (updateResult.rows.length === 0) {
+      await client.query('ROLLBACK');
       return res.status(404).json({
         success: false,
         error: 'Заявка не найдена или её уже нельзя отменить'
       });
     }
 
-    await touchUserActivity(req.user.userId);
+    await insertApplicationHistory(client, {
+      applicationId,
+      action: 'cancelled',
+      oldStatus: 'pending',
+      newStatus: 'cancelled',
+      actorUserId: req.user.userId,
+      actorName: updateResult.rows[0].applicant_name || null
+    });
+
+    await touchUserActivity(req.user.userId, client);
+    await client.query('COMMIT');
 
     return res.json({
       success: true,
@@ -573,13 +643,17 @@ router.patch('/:id/cancel', requireAuth, requireRole(['applicant']), async (req,
       data: updateResult.rows[0]
     });
   } catch (error) {
+    await client.query('ROLLBACK');
     console.error('Error cancelling application:', error);
     return res.status(500).json({ success: false, error: 'Ошибка сервера' });
+  } finally {
+    client.release();
   }
 });
 
 // Accept/reject application (college representative of the same college)
 router.patch('/:id/status', requireAuth, requireRole(['college_rep']), async (req, res) => {
+  const client = await db.connect();
   try {
     const applicationId = Number(req.params.id);
     const status = typeof req.body.status === 'string' ? req.body.status : '';
@@ -600,7 +674,35 @@ router.patch('/:id/status', requireAuth, requireRole(['college_rep']), async (re
       return res.status(400).json({ success: false, error: 'Колледж не привязан к пользователю' });
     }
 
-    const updateResult = await db.query(
+    await client.query('BEGIN');
+
+    const beforeResult = await client.query(
+      `
+      SELECT id, status
+      FROM applications
+      WHERE id = $1
+        AND college_id = $2
+        AND status != 'cancelled'
+      FOR UPDATE
+      `,
+      [applicationId, collegeId]
+    );
+
+    if (beforeResult.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({
+        success: false,
+        error: 'Заявка не найдена или недоступна для вашего колледжа'
+      });
+    }
+
+    const beforeStatus = beforeResult.rows[0].status;
+    const actorResult = await client.query(
+      'SELECT name FROM users WHERE id = $1 LIMIT 1',
+      [req.user.userId]
+    );
+
+    const updateResult = await client.query(
       `
       UPDATE applications
       SET
@@ -616,14 +718,17 @@ router.patch('/:id/status', requireAuth, requireRole(['college_rep']), async (re
       [status, req.user.userId, applicationId, collegeId]
     );
 
-    if (updateResult.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        error: 'Заявка не найдена или недоступна для вашего колледжа'
-      });
-    }
+    await insertApplicationHistory(client, {
+      applicationId,
+      action: 'status_changed',
+      oldStatus: beforeStatus,
+      newStatus: status,
+      actorUserId: req.user.userId,
+      actorName: actorResult.rows[0]?.name || null
+    });
 
-    await touchUserActivity(req.user.userId);
+    await touchUserActivity(req.user.userId, client);
+    await client.query('COMMIT');
 
     let emailResult = null;
     if (status === 'accepted') {
@@ -675,8 +780,11 @@ router.patch('/:id/status', requireAuth, requireRole(['college_rep']), async (re
       }
     });
   } catch (error) {
+    await client.query('ROLLBACK');
     console.error('Error updating application status:', error);
     return res.status(500).json({ success: false, error: 'Ошибка сервера' });
+  } finally {
+    client.release();
   }
 });
 

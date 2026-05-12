@@ -3,6 +3,9 @@ const router = express.Router();
 const jwt = require('jsonwebtoken');
 const upload = require('../middleware/upload');
 const db = require('../db');
+const {
+  isAllowedApplicationDocumentType
+} = upload;
 
 // Middleware для проверки авторизации
 const requireAuth = async (req, res, next) => {
@@ -18,8 +21,25 @@ const requireAuth = async (req, res, next) => {
   }
 };
 
+const markApplicationDocumentUpload = (req, res, next) => {
+  req.uploadTarget = 'application-document';
+  next();
+};
+
+const requireCollegeImageUploader = (req, res, next) => {
+  if (!['college_rep', 'admin'].includes(req.user?.roleName)) {
+    return res.status(403).json({ success: false, error: 'Загружать логотип колледжа может только представитель колледжа' });
+  }
+
+  if (!req.user.collegeId) {
+    return res.status(404).json({ success: false, error: 'Колледж не привязан к пользователю' });
+  }
+
+  return next();
+};
+
 // Загрузка изображения для колледжа
-router.post('/college-image', requireAuth, upload.single('image'), async (req, res) => {
+router.post('/college-image', requireAuth, requireCollegeImageUploader, upload.single('image'), async (req, res) => {
   try {
     console.log('📸 POST /api/upload/college-image');
     
@@ -75,6 +95,40 @@ router.post('/college-image', requireAuth, upload.single('image'), async (req, r
     }
     
     res.status(500).json({ success: false, error: 'Ошибка сервера: ' + error.message });
+  }
+});
+
+router.post('/application-document', requireAuth, markApplicationDocumentUpload, upload.single('document'), async (req, res) => {
+  try {
+    const documentType = typeof req.body.documentType === 'string' ? req.body.documentType : '';
+
+    if (req.user.roleName !== 'applicant') {
+      return res.status(403).json({ success: false, error: 'Документы может загружать только абитуриент' });
+    }
+
+    if (!isAllowedApplicationDocumentType(documentType)) {
+      return res.status(400).json({ success: false, error: 'Некорректный тип документа' });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({ success: false, error: 'Файл не загружен' });
+    }
+
+    return res.json({
+      success: true,
+      message: 'Документ загружен',
+      data: {
+        documentType,
+        originalName: req.file.originalname,
+        fileName: req.uploadedFileName,
+        fileUrl: `/uploads/application-documents/${req.uploadedFileName}`,
+        mimeType: req.file.mimetype,
+        size: req.file.size
+      }
+    });
+  } catch (error) {
+    console.error('Error uploading application document:', error);
+    return res.status(500).json({ success: false, error: 'Ошибка сервера: ' + error.message });
   }
 });
 

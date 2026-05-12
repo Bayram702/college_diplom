@@ -1,6 +1,13 @@
 <template>
   <div class="admin-panel">
-    
+    <div class="panel-top-nav">
+      <router-link to="/sector" class="panel-nav-link">
+        <i class="fas fa-graduation-cap"></i> Специальности
+      </router-link>
+      <router-link to="/colleges" class="panel-nav-link">
+        <i class="fas fa-university"></i> Колледжи
+      </router-link>
+    </div>
 
     <!-- Вкладки -->
     <div class="container">
@@ -1058,6 +1065,30 @@ const logout = () => {
 
 <style scoped>
 .admin-panel { min-height: 100vh; background: #f5f7fa; }
+
+.panel-top-nav {
+  display: flex;
+  gap: 10px;
+  padding: 14px max(20px, calc((100% - 1200px) / 2)) 0;
+  background: #f5f7fa;
+}
+
+.panel-nav-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border: 1px solid #dbeafe;
+  border-radius: 8px;
+  background: #fff;
+  color: #0054a6;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.panel-nav-link:hover {
+  background: #eff6ff;
+}
 
 /* Хедер панели */
 .panel-header { background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%); color: white; padding: 20px 0; margin-bottom: 0; }
