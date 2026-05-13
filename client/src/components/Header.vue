@@ -17,10 +17,11 @@
           </router-link>
 
           <nav class="nav-menu">
+            <router-link to="/" active-class="active">Главная</router-link>
+            <router-link to="/sector" active-class="active">Специальности</router-link>
+            <router-link to="/colleges" active-class="active">Колледжи</router-link>
+
             <template v-if="!currentUser">
-              <router-link to="/" active-class="active">Главная</router-link>
-              <router-link to="/sector" active-class="active">Специальности</router-link>
-              <router-link to="/colleges" active-class="active">Колледжи</router-link>
               <router-link to="/register" class="register-link">
                 <i class="fas fa-user-plus"></i> Регистрация
               </router-link>
@@ -29,21 +30,7 @@
               </router-link>
             </template>
 
-            <template v-else-if="isApplicant">
-              <router-link to="/" active-class="active">Главная</router-link>
-              <router-link to="/colleges" active-class="active">Колледжи</router-link>
-              <router-link to="/sector" active-class="active">Специальности</router-link>
-              <div class="user-menu user-menu-applicant">
-                <router-link :to="userDashboardLink" class="user-panel-btn">
-                  <i class="fas fa-user-circle"></i> {{ currentUser.name }}
-                </router-link>
-                <button class="logout-btn" @click="logout" title="Выйти">
-                  <i class="fas fa-sign-out-alt"></i>
-                </button>
-              </div>
-            </template>
-
-            <div v-else class="user-menu">
+            <div v-else class="user-menu user-menu-applicant">
               <router-link :to="userDashboardLink" class="user-panel-btn">
                 <i class="fas fa-user-circle"></i> {{ currentUser.name }}
               </router-link>
@@ -74,7 +61,6 @@ const userDashboardLink = computed(() => {
   return '/'
 })
 
-const isApplicant = computed(() => currentUser.value?.role?.name === 'applicant')
 
 const updateCurrentUser = () => {
   const userStr = localStorage.getItem('user')

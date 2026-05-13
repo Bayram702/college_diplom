@@ -1,14 +1,5 @@
 <template>
   <div class="admin-panel">
-    <div class="panel-top-nav">
-      <router-link to="/sector" class="panel-nav-link">
-        <i class="fas fa-graduation-cap"></i> Специальности
-      </router-link>
-      <router-link to="/colleges" class="panel-nav-link">
-        <i class="fas fa-university"></i> Колледжи
-      </router-link>
-    </div>
-
     <!-- Вкладки -->
     <div class="container">
       <div class="tabs">
@@ -32,6 +23,13 @@
           @click="activeTab = 'sectors'"
         >
           <i class="fas fa-layer-group"></i> Отрасли
+        </button>
+        <button
+          class="tab-btn"
+          :class="{ active: activeTab === 'complaints' }"
+          @click="activeTab = 'complaints'"
+        >
+          <i class="fas fa-flag"></i> Жалобы
         </button>
         <button
           class="tab-btn"
@@ -331,6 +329,76 @@
         </div>
       </div>
 
+      <div v-if="activeTab === 'complaints'" class="tab-content active">
+        <div class="specialities-header">
+          <h3>Жалобы на отзывы</h3>
+          <button class="btn btn-secondary" type="button" @click="fetchReviewComplaints">
+            <i class="fas fa-sync-alt"></i> Обновить
+          </button>
+        </div>
+
+        <div v-if="complaintsLoading" class="loading-state">
+          <i class="fas fa-spinner fa-spin"></i> Загрузка жалоб...
+        </div>
+        <div v-else-if="complaintsError" class="error-state">
+          <i class="fas fa-exclamation-triangle"></i> {{ complaintsError }}
+          <button @click="fetchReviewComplaints" class="btn-retry">Повторить</button>
+        </div>
+        <div v-else class="table-container">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Дата</th>
+                <th>Колледж</th>
+                <th>Отзыв</th>
+                <th>Жалоба</th>
+                <th>Статус</th>
+                <th>Действия</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="complaint in reviewComplaints" :key="complaint.id">
+                <td>{{ formatDateTime(complaint.created_at) }}</td>
+                <td>{{ complaint.college_name }}</td>
+                <td>
+                  <div class="complaint-review-text">
+                    <strong>{{ complaint.author_name }}</strong>
+                    <span>{{ complaint.review_text }}</span>
+                  </div>
+                </td>
+                <td>
+                  <div class="complaint-review-text">
+                    <strong>{{ getComplaintReasonLabel(complaint.reason) }}</strong>
+                    <span>{{ complaint.comment || 'Комментарий не указан' }}</span>
+                    <span class="text-muted">Отправил: {{ complaint.reporter_name }}</span>
+                  </div>
+                </td>
+                <td>
+                  <span class="status-badge" :class="getComplaintStatusClass(complaint.status)">
+                    {{ getComplaintStatusLabel(complaint.status) }}
+                  </span>
+                </td>
+                <td>
+                  <div v-if="complaint.status === 'pending'" class="action-buttons">
+                    <button class="btn-icon btn-delete" @click="resolveReviewComplaint(complaint, 'hide_review')" title="Скрыть отзыв">
+                      <i class="fas fa-eye-slash"></i>
+                    </button>
+                    <button class="btn-icon btn-edit" @click="resolveReviewComplaint(complaint, 'reject')" title="Отклонить жалобу">
+                      <i class="fas fa-times"></i>
+                    </button>
+                  </div>
+                  <span v-else class="text-muted">{{ formatDateTime(complaint.resolved_at) }}</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <div v-if="reviewComplaints.length === 0" class="empty-state">
+            <i class="fas fa-flag"></i>
+            <p>Жалоб пока нет</p>
+          </div>
+        </div>
+      </div>
+
       <!-- Вкладка: Настройки -->
       <div v-if="activeTab === 'settings'" class="tab-content active">
         <div class="settings-editor admin-settings-card">
@@ -593,6 +661,23 @@ const sectorsError = ref(null)
 const editingSector = ref(null)
 const sectorForm = ref({ name: '', code: '', description: '', sort_order: 0, is_active: true })
 
+// Жалобы на отзывы
+const reviewComplaints = ref([])
+const complaintsLoading = ref(false)
+const complaintsError = ref(null)
+const complaintReasonLabels = {
+  spam: 'Спам или реклама',
+  offensive: 'Оскорбления',
+  false_info: 'Недостоверная информация',
+  personal_data: 'Персональные данные',
+  other: 'Другое'
+}
+const complaintStatusLabels = {
+  pending: 'Ожидает',
+  resolved_hidden: 'Отзыв скрыт',
+  resolved_rejected: 'Отклонена'
+}
+
 // Модальное окно
 const showUserModal = ref(false)
 const editingUser = ref(null)
@@ -629,6 +714,7 @@ onMounted(() => {
 watch(activeTab, (tab) => {
   if (tab === 'colleges' && colleges.value.length === 0) fetchColleges()
   if (tab === 'sectors' && sectors.value.length === 0) fetchSectors()
+  if (tab === 'complaints' && reviewComplaints.value.length === 0) fetchReviewComplaints()
   if (tab === 'settings') {
     loadAdminProfile()
     if (settingsList.value.length === 0) fetchSettings()
@@ -688,6 +774,13 @@ const getStatusClass = (status) => ({ active: 'status-active', inactive: 'status
 const formatDate = (d) => d ? new Date(d).toLocaleDateString('ru-RU') : '—'
 const formatDateTime = (d) => d ? new Date(d).toLocaleString('ru-RU') : '—'
 const getUserCollegeName = (user) => user.role?.name === 'applicant' ? '—' : (user.college?.name || 'Не назначен')
+const getComplaintReasonLabel = (reason) => complaintReasonLabels[reason] || reason
+const getComplaintStatusLabel = (status) => complaintStatusLabels[status] || status
+const getComplaintStatusClass = (status) => ({
+  pending: 'status-blocked',
+  resolved_hidden: 'status-inactive',
+  resolved_rejected: 'status-active'
+}[status] || '')
 
 const syncAdminProfileFromStorage = () => {
   try {
@@ -1054,6 +1147,49 @@ const deleteSector = async (sector) => {
   }
 }
 
+const fetchReviewComplaints = async () => {
+  complaintsLoading.value = true
+  complaintsError.value = null
+  try {
+    const token = localStorage.getItem('authToken')
+    const response = await axios.get(`${API_URL}/reviews/complaints`, {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+    if (response.data.success) {
+      reviewComplaints.value = response.data.data || []
+    }
+  } catch (err) {
+    complaintsError.value = err.response?.status === 401 ? 'Сессия истекла' : (err.response?.data?.error || err.message)
+    if (err.response?.status === 401) {
+      localStorage.removeItem('authToken')
+      localStorage.removeItem('user')
+      router.push('/login')
+    }
+  } finally {
+    complaintsLoading.value = false
+  }
+}
+
+const resolveReviewComplaint = async (complaint, action) => {
+  const message = action === 'hide_review'
+    ? 'Скрыть отзыв по этой жалобе?'
+    : 'Отклонить эту жалобу?'
+  if (!confirm(message)) return
+
+  try {
+    const token = localStorage.getItem('authToken')
+    await axios.patch(`${API_URL}/reviews/complaints/${complaint.id}`, { action }, {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+    await fetchReviewComplaints()
+    alertMessage.value = action === 'hide_review' ? 'Отзыв скрыт' : 'Жалоба отклонена'
+    alertType.value = 'success'
+  } catch (err) {
+    alertMessage.value = 'Ошибка обработки жалобы: ' + (err.response?.data?.error || err.message)
+    alertType.value = 'error'
+  }
+}
+
 const logout = () => {
   if (confirm('Выйти из системы?')) {
     localStorage.removeItem('authToken'); localStorage.removeItem('user')
@@ -1169,6 +1305,8 @@ const logout = () => {
 .college-info { display: flex; flex-direction: column; gap: 4px; }
 .college-info strong { color: #1e293b; }
 .short-name { color: #64748b; font-size: 0.8rem; background: #f1f5f9; padding: 2px 8px; border-radius: 4px; display: inline-block; width: fit-content; }
+.complaint-review-text { display: flex; flex-direction: column; gap: 6px; max-width: 360px; }
+.complaint-review-text span { color: #475569; line-height: 1.45; }
 
 .action-buttons { display: flex; gap: 8px; }
 .btn-icon { width: 36px; height: 36px; border: none; border-radius: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.3s; }

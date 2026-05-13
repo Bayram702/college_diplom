@@ -27,10 +27,40 @@ const requireApplicant = (req, res, next) => {
   return next();
 };
 
+const requireAdmin = (req, res, next) => {
+  if (req.user?.roleName !== 'admin') {
+    return res.status(403).json({ success: false, error: 'Доступ запрещён' });
+  }
+
+  return next();
+};
+
 const parsePositiveId = (value) => {
   const id = Number(value);
   if (!Number.isInteger(id) || id <= 0) return null;
   return id;
+};
+
+const COMPLAINT_REASONS = new Set(['spam', 'offensive', 'false_info', 'personal_data', 'other']);
+const COMPLAINT_ACTIONS = new Set(['hide_review', 'reject']);
+
+const normalizeComplaint = (body) => {
+  const reason = typeof body.reason === 'string' ? body.reason.trim() : '';
+  const comment = typeof body.comment === 'string' ? body.comment.trim() : '';
+
+  if (!COMPLAINT_REASONS.has(reason)) {
+    return { ok: false, error: 'Некорректная причина жалобы' };
+  }
+
+  if (comment.length > 1000) {
+    return { ok: false, error: 'Комментарий к жалобе не должен превышать 1000 символов' };
+  }
+
+  return {
+    ok: true,
+    reason,
+    comment: comment || null
+  };
 };
 
 const parseRating = (value) => {
@@ -201,6 +231,169 @@ router.get('/my', requireAuth, requireApplicant, async (req, res) => {
   } catch (error) {
     console.error('Error fetching user reviews:', error);
     return res.status(500).json({ success: false, error: 'Ошибка сервера' });
+  }
+});
+
+router.post('/:id/complaints', requireAuth, async (req, res) => {
+  try {
+    const reviewId = parsePositiveId(req.params.id);
+    if (!reviewId) {
+      return res.status(400).json({ success: false, error: 'Некорректный отзыв' });
+    }
+
+    const complaint = normalizeComplaint(req.body);
+    if (!complaint.ok) {
+      return res.status(400).json({ success: false, error: complaint.error });
+    }
+
+    const reviewResult = await db.query(
+      "SELECT id FROM college_reviews WHERE id = $1 AND status = 'published' LIMIT 1",
+      [reviewId]
+    );
+
+    if (reviewResult.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Отзыв не найден' });
+    }
+
+    const result = await db.query(
+      `
+      INSERT INTO review_complaints (review_id, reporter_user_id, reason, comment)
+      VALUES ($1, $2, $3, $4)
+      RETURNING id, review_id, reporter_user_id, reason, comment, status, created_at
+      `,
+      [reviewId, req.user.userId, complaint.reason, complaint.comment]
+    );
+
+    return res.status(201).json({
+      success: true,
+      message: 'Жалоба отправлена',
+      data: result.rows[0]
+    });
+  } catch (error) {
+    if (error.code === '23505') {
+      return res.status(400).json({
+        success: false,
+        error: 'Вы уже отправили жалобу на этот отзыв'
+      });
+    }
+
+    console.error('Error creating review complaint:', error);
+    return res.status(500).json({ success: false, error: 'Ошибка сервера' });
+  }
+});
+
+router.get('/complaints', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const result = await db.query(
+      `
+      SELECT
+        rc.id,
+        rc.review_id,
+        rc.reporter_user_id,
+        rc.reason,
+        rc.comment,
+        rc.status,
+        rc.resolved_by,
+        rc.resolved_at,
+        rc.created_at,
+        cr.rating,
+        cr.text AS review_text,
+        cr.status AS review_status,
+        cr.created_at AS review_created_at,
+        c.id AS college_id,
+        c.name AS college_name,
+        author.name AS author_name,
+        reporter.name AS reporter_name,
+        resolver.name AS resolved_by_name
+      FROM review_complaints rc
+      JOIN college_reviews cr ON cr.id = rc.review_id
+      JOIN colleges c ON c.id = cr.college_id
+      JOIN users author ON author.id = cr.user_id
+      JOIN users reporter ON reporter.id = rc.reporter_user_id
+      LEFT JOIN users resolver ON resolver.id = rc.resolved_by
+      ORDER BY
+        CASE WHEN rc.status = 'pending' THEN 0 ELSE 1 END,
+        rc.created_at DESC
+      `
+    );
+
+    return res.json({ success: true, data: result.rows });
+  } catch (error) {
+    console.error('Error fetching review complaints:', error);
+    return res.status(500).json({ success: false, error: 'Ошибка сервера' });
+  }
+});
+
+router.patch('/complaints/:id', requireAuth, requireAdmin, async (req, res) => {
+  const client = await db.connect();
+  try {
+    const complaintId = parsePositiveId(req.params.id);
+    const action = typeof req.body.action === 'string' ? req.body.action : '';
+
+    if (!complaintId) {
+      return res.status(400).json({ success: false, error: 'Некорректная жалоба' });
+    }
+
+    if (!COMPLAINT_ACTIONS.has(action)) {
+      return res.status(400).json({ success: false, error: 'Некорректное действие' });
+    }
+
+    await client.query('BEGIN');
+
+    const complaintResult = await client.query(
+      `
+      SELECT id, review_id, status
+      FROM review_complaints
+      WHERE id = $1
+      FOR UPDATE
+      `,
+      [complaintId]
+    );
+
+    if (complaintResult.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ success: false, error: 'Жалоба не найдена' });
+    }
+
+    if (complaintResult.rows[0].status !== 'pending') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ success: false, error: 'Жалоба уже обработана' });
+    }
+
+    const nextStatus = action === 'hide_review' ? 'resolved_hidden' : 'resolved_rejected';
+
+    if (action === 'hide_review') {
+      await client.query(
+        "UPDATE college_reviews SET status = 'hidden_by_complaint', updated_at = CURRENT_TIMESTAMP WHERE id = $1",
+        [complaintResult.rows[0].review_id]
+      );
+    }
+
+    const updateResult = await client.query(
+      `
+      UPDATE review_complaints
+      SET status = $1,
+          resolved_by = $2,
+          resolved_at = CURRENT_TIMESTAMP
+      WHERE id = $3
+      RETURNING id, review_id, reporter_user_id, reason, comment, status, resolved_by, resolved_at, created_at
+      `,
+      [nextStatus, req.user.userId, complaintId]
+    );
+
+    await client.query('COMMIT');
+
+    return res.json({
+      success: true,
+      message: action === 'hide_review' ? 'Отзыв скрыт' : 'Жалоба отклонена',
+      data: updateResult.rows[0]
+    });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Error resolving review complaint:', error);
+    return res.status(500).json({ success: false, error: 'Ошибка сервера' });
+  } finally {
+    client.release();
   }
 });
 

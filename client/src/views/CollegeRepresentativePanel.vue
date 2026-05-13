@@ -1,14 +1,5 @@
 <template>
   <div class="college-rep-panel">
-    <div class="panel-top-nav">
-      <router-link to="/sector" class="panel-nav-link">
-        <i class="fas fa-graduation-cap"></i> Специальности
-      </router-link>
-      <router-link to="/colleges" class="panel-nav-link">
-        <i class="fas fa-university"></i> Колледжи
-      </router-link>
-    </div>
-
     <!-- Основной контент -->
     <div class="container" style="padding-top: 20px;">
       <!-- Состояние загрузки -->

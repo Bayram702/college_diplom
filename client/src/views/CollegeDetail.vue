@@ -335,7 +335,7 @@
           </div>
 
           <div v-else class="reviews-list">
-            <article v-for="review in reviews" :key="review.id" class="review-card">
+            <article v-for="review in visibleReviews" :key="review.id" class="review-card">
               <div class="review-card-header">
                 <div>
                   <h3>{{ review.author_name || 'Абитуриент' }}</h3>
@@ -349,8 +349,61 @@
                   ></i>
                 </div>
               </div>
-              <p>{{ review.text }}</p>
+              <p>{{ getReviewText(review.text, isReviewExpanded(review.id)) }}</p>
+              <button
+                v-if="isReviewTextExpandable(review.text)"
+                type="button"
+                class="review-inline-toggle"
+                @click="toggleReviewText(review.id)"
+              >
+                {{ isReviewExpanded(review.id) ? 'Свернуть' : 'Развернуть' }}
+              </button>
+              <div class="review-complaint">
+                <button
+                  type="button"
+                  class="review-inline-toggle"
+                  @click="openComplaintForm(review.id)"
+                >
+                  Пожаловаться
+                </button>
+
+                <form
+                  v-if="activeComplaintReviewId === review.id"
+                  class="complaint-form"
+                  @submit.prevent="submitComplaint(review)"
+                >
+                  <select v-model="complaintForm.reason" class="form-control">
+                    <option v-for="reason in complaintReasons" :key="reason.value" :value="reason.value">
+                      {{ reason.label }}
+                    </option>
+                  </select>
+                  <textarea
+                    v-model="complaintForm.comment"
+                    class="form-control"
+                    rows="2"
+                    maxlength="1000"
+                    placeholder="Комментарий к жалобе"
+                  ></textarea>
+                  <div class="complaint-actions">
+                    <button type="submit" class="btn-primary complaint-submit" :disabled="submittingComplaint">
+                      {{ submittingComplaint ? 'Отправка...' : 'Отправить жалобу' }}
+                    </button>
+                    <button type="button" class="review-inline-toggle" @click="closeComplaintForm">
+                      Отмена
+                    </button>
+                  </div>
+                </form>
+              </div>
             </article>
+
+            <button
+              v-if="canToggleReviews"
+              type="button"
+              class="reviews-toggle"
+              @click="toggleReviewsList"
+            >
+              {{ reviewsToggleLabel }}
+            </button>
           </div>
         </section>
 
@@ -547,6 +600,7 @@ import axios from 'axios'
 import { formatRussianPhone, maskRussianPhoneInput, normalizeRussianPhone } from '../utils/phone'
 import { loadYandexMaps as loadYandexMapsApi } from '../utils/yandex-maps'
 import { resolveImageUrl } from '../utils/images'
+import { getReviewText, getVisibleReviews, isReviewTextExpandable } from '../utils/reviews'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000/api'
 const route = useRoute()
@@ -572,6 +626,8 @@ const isFavoriteCollege = ref(false)
 const loadingReviews = ref(false)
 const submittingReview = ref(false)
 const reviews = ref([])
+const areReviewsExpanded = ref(false)
+const expandedReviewIds = ref(new Set())
 const reviewSummary = ref({
   total: 0,
   average: 0,
@@ -582,6 +638,19 @@ const reviewMessageType = ref('info')
 const reviewForm = ref({
   rating: 5,
   text: ''
+})
+const complaintReasons = [
+  { value: 'spam', label: 'Спам или реклама' },
+  { value: 'offensive', label: 'Оскорбления' },
+  { value: 'false_info', label: 'Недостоверная информация' },
+  { value: 'personal_data', label: 'Персональные данные' },
+  { value: 'other', label: 'Другое' }
+]
+const activeComplaintReviewId = ref(null)
+const submittingComplaint = ref(false)
+const complaintForm = ref({
+  reason: 'spam',
+  comment: ''
 })
 
 const showApplicationModal = ref(false)
@@ -702,6 +771,10 @@ const isApplicationsLimitReached = computed(
   () => applicantApplicationsStats.value.total >= applicantApplicationsStats.value.limit
 )
 
+const visibleReviews = computed(() => getVisibleReviews(reviews.value, areReviewsExpanded.value))
+const canToggleReviews = computed(() => reviews.value.length > visibleReviews.value.length || areReviewsExpanded.value)
+const reviewsToggleLabel = computed(() => areReviewsExpanded.value ? 'Свернуть отзывы' : 'Показать все отзывы')
+
 const parseAvgScore = (value) => {
   const score = Number(value)
   if (!Number.isFinite(score)) return null
@@ -760,6 +833,65 @@ const setReviewMessage = (message, type = 'info') => {
   reviewMessageType.value = type
 }
 
+const isReviewExpanded = (reviewId) => expandedReviewIds.value.has(reviewId)
+
+const toggleReviewText = (reviewId) => {
+  const nextIds = new Set(expandedReviewIds.value)
+  if (nextIds.has(reviewId)) {
+    nextIds.delete(reviewId)
+  } else {
+    nextIds.add(reviewId)
+  }
+  expandedReviewIds.value = nextIds
+}
+
+const toggleReviewsList = () => {
+  areReviewsExpanded.value = !areReviewsExpanded.value
+}
+
+const closeComplaintForm = () => {
+  activeComplaintReviewId.value = null
+  complaintForm.value = { reason: 'spam', comment: '' }
+}
+
+const openComplaintForm = (reviewId) => {
+  const token = getAuthToken()
+  if (!token || !currentUser.value) {
+    router.push({ name: 'Login', query: { redirect: route.fullPath } })
+    return
+  }
+
+  activeComplaintReviewId.value = activeComplaintReviewId.value === reviewId ? null : reviewId
+  complaintForm.value = { reason: 'spam', comment: '' }
+}
+
+const submitComplaint = async (review) => {
+  const token = getAuthToken()
+  if (!token || !currentUser.value) {
+    router.push({ name: 'Login', query: { redirect: route.fullPath } })
+    return
+  }
+
+  submittingComplaint.value = true
+  reviewMessage.value = ''
+
+  try {
+    await axios.post(`${API_URL}/reviews/${review.id}/complaints`, {
+      reason: complaintForm.value.reason,
+      comment: complaintForm.value.comment.trim()
+    }, {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+
+    closeComplaintForm()
+    setReviewMessage('Жалоба отправлена администратору.', 'success')
+  } catch (error) {
+    setReviewMessage(error.response?.data?.error || 'Не удалось отправить жалобу', 'error')
+  } finally {
+    submittingComplaint.value = false
+  }
+}
+
 const loadReviews = async () => {
   const collegeId = route.params.id
   if (!collegeId) return
@@ -770,6 +902,8 @@ const loadReviews = async () => {
 
     if (response.data?.success) {
       reviews.value = response.data.data.reviews || []
+      areReviewsExpanded.value = false
+      expandedReviewIds.value = new Set()
       reviewSummary.value = response.data.data.summary || {
         total: 0,
         average: 0,
@@ -1723,6 +1857,51 @@ onUnmounted(() => {
   margin: 0;
   line-height: 1.6;
   color: var(--text-dark);
+}
+
+.review-inline-toggle,
+.reviews-toggle {
+  border: none;
+  background: transparent;
+  color: var(--primary-blue);
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.review-inline-toggle {
+  margin-top: 8px;
+  padding: 0;
+}
+
+.reviews-toggle {
+  justify-self: start;
+  padding: 8px 0;
+}
+
+.review-complaint {
+  margin-top: 10px;
+}
+
+.complaint-form {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.complaint-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.complaint-submit {
+  padding: 10px 16px;
+  font-size: 0.9rem;
 }
 
 .application-modal-overlay {

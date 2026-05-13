@@ -9,6 +9,7 @@ const jwt = require('jsonwebtoken');
 const settingsRoute = require('../routes/settings');
 const sectorsRoute = require('../routes/sectors');
 const uploadRoute = require('../routes/upload');
+const reviewsRoute = require('../routes/reviews');
 
 const isAscending = (values) => values.every((value, index) => index === 0 || values[index - 1] <= value);
 const jwtSecret = process.env.JWT_SECRET || 'your-secret-key';
@@ -34,9 +35,17 @@ const requestRoute = async (route, method, path, { token = null, body = null } =
       body: body === null ? undefined : JSON.stringify(body)
     });
 
+    const responseText = await response.text();
+    let responseBody = null;
+    try {
+      responseBody = responseText ? JSON.parse(responseText) : null;
+    } catch {
+      responseBody = { raw: responseText };
+    }
+
     return {
       status: response.status,
-      body: await response.json()
+      body: responseBody
     };
   } finally {
     await new Promise((resolve, reject) => {
@@ -46,6 +55,93 @@ const requestRoute = async (route, method, path, { token = null, body = null } =
 };
 
 const tokenForRole = (roleName) => jwt.sign({ userId: 1, roleName }, jwtSecret);
+
+const tokenForUser = (user) => jwt.sign({
+  userId: user.id,
+  roleName: user.roleName,
+  collegeId: user.collegeId || null
+}, jwtSecret);
+
+const complaintFixtures = [];
+
+const getRoleId = async (name) => {
+  const result = await db.query('SELECT id FROM roles WHERE name = $1 LIMIT 1', [name]);
+  if (result.rows[0]) return result.rows[0].id;
+
+  const insert = await db.query(
+    'INSERT INTO roles (name, description) VALUES ($1, $2) RETURNING id',
+    [name, name]
+  );
+  return insert.rows[0].id;
+};
+
+const createComplaintFixture = async () => {
+  const suffix = `${Date.now()}_${Math.random().toString(16).slice(2)}`;
+  const passportNumber = String(Date.now()).slice(-6);
+  const reporterPassportNumber = String(Number(passportNumber) + 1).padStart(6, '0').slice(-6);
+  const applicantRoleId = await getRoleId('applicant');
+  const adminRoleId = await getRoleId('admin');
+
+  const collegeResult = await db.query(
+    `
+    INSERT INTO colleges (name, short_name, status)
+    VALUES ($1, $2, 'active')
+    RETURNING id
+    `,
+    [`Complaint test college ${suffix}`, `CTC${suffix.slice(-4)}`]
+  );
+
+  const authorResult = await db.query(
+    `
+    INSERT INTO users (login, email, password_hash, name, role_id, status, passport_series, passport_number, avg_score, last_activity_at)
+    VALUES ($1, $2, 'hash', 'Review Author', $3, 'active', '4500', $4, 4.50, CURRENT_TIMESTAMP)
+    RETURNING id
+    `,
+    [`review_author_${suffix}`, `review_author_${suffix}@example.com`, applicantRoleId, passportNumber]
+  );
+
+  const reporterResult = await db.query(
+    `
+    INSERT INTO users (login, email, password_hash, name, role_id, status, passport_series, passport_number, avg_score, last_activity_at)
+    VALUES ($1, $2, 'hash', 'Review Reporter', $3, 'active', '4501', $4, 4.20, CURRENT_TIMESTAMP)
+    RETURNING id
+    `,
+    [`review_reporter_${suffix}`, `review_reporter_${suffix}@example.com`, applicantRoleId, reporterPassportNumber]
+  );
+
+  const adminResult = await db.query(
+    `
+    INSERT INTO users (login, email, password_hash, name, role_id, status, last_activity_at)
+    VALUES ($1, $2, 'hash', 'Complaint Admin', $3, 'active', CURRENT_TIMESTAMP)
+    RETURNING id
+    `,
+    [`complaint_admin_${suffix}`, `complaint_admin_${suffix}@example.com`, adminRoleId]
+  );
+
+  const reviewResult = await db.query(
+    `
+    INSERT INTO college_reviews (college_id, user_id, rating, text, status)
+    VALUES ($1, $2, 2, 'Complaint test review', 'published')
+    RETURNING id
+    `,
+    [collegeResult.rows[0].id, authorResult.rows[0].id]
+  );
+
+  const fixture = {
+    collegeId: collegeResult.rows[0].id,
+    reviewId: reviewResult.rows[0].id,
+    userIds: [
+      authorResult.rows[0].id,
+      reporterResult.rows[0].id,
+      adminResult.rows[0].id
+    ],
+    reporter: { id: reporterResult.rows[0].id, roleName: 'applicant' },
+    admin: { id: adminResult.rows[0].id, roleName: 'admin' }
+  };
+
+  complaintFixtures.push(fixture);
+  return fixture;
+};
 
 test('applicant passport data is filled and unique', async () => {
   const missingResult = await db.query(`
@@ -304,6 +400,80 @@ test('college logo upload requires representative or admin role before file hand
   assert.equal(applicant.status, 403);
 });
 
+test('review complaint creation requires authentication', async () => {
+  const response = await requestRoute(reviewsRoute, 'POST', '/1/complaints', {
+    body: { reason: 'spam', comment: 'Реклама' }
+  });
+
+  assert.equal(response.status, 401);
+});
+
+test('authenticated users can complain about a published review only once', async () => {
+  const fixture = await createComplaintFixture();
+  const token = tokenForUser(fixture.reporter);
+
+  const firstResponse = await requestRoute(reviewsRoute, 'POST', `/${fixture.reviewId}/complaints`, {
+    token,
+    body: { reason: 'spam', comment: 'Реклама в отзыве' }
+  });
+  assert.equal(firstResponse.status, 201);
+  assert.equal(firstResponse.body.data.status, 'pending');
+
+  const duplicateResponse = await requestRoute(reviewsRoute, 'POST', `/${fixture.reviewId}/complaints`, {
+    token,
+    body: { reason: 'spam', comment: 'Повтор' }
+  });
+  assert.equal(duplicateResponse.status, 400);
+});
+
+test('admin can hide a review from a complaint', async () => {
+  const fixture = await createComplaintFixture();
+  const reporterToken = tokenForUser(fixture.reporter);
+  const adminToken = tokenForUser(fixture.admin);
+
+  const complaintResponse = await requestRoute(reviewsRoute, 'POST', `/${fixture.reviewId}/complaints`, {
+    token: reporterToken,
+    body: { reason: 'offensive', comment: 'Оскорбление' }
+  });
+
+  const resolveResponse = await requestRoute(reviewsRoute, 'PATCH', `/complaints/${complaintResponse.body.data.id}`, {
+    token: adminToken,
+    body: { action: 'hide_review' }
+  });
+
+  assert.equal(resolveResponse.status, 200);
+  assert.equal(resolveResponse.body.data.status, 'resolved_hidden');
+
+  const reviewResult = await db.query('SELECT status FROM college_reviews WHERE id = $1', [fixture.reviewId]);
+  assert.equal(reviewResult.rows[0].status, 'hidden_by_complaint');
+});
+
+test('admin can reject a review complaint without hiding the review', async () => {
+  const fixture = await createComplaintFixture();
+  const reporterToken = tokenForUser(fixture.reporter);
+  const adminToken = tokenForUser(fixture.admin);
+
+  const complaintResponse = await requestRoute(reviewsRoute, 'POST', `/${fixture.reviewId}/complaints`, {
+    token: reporterToken,
+    body: { reason: 'false_info', comment: 'Недостоверно' }
+  });
+
+  const resolveResponse = await requestRoute(reviewsRoute, 'PATCH', `/complaints/${complaintResponse.body.data.id}`, {
+    token: adminToken,
+    body: { action: 'reject' }
+  });
+
+  assert.equal(resolveResponse.status, 200);
+  assert.equal(resolveResponse.body.data.status, 'resolved_rejected');
+
+  const reviewResult = await db.query('SELECT status FROM college_reviews WHERE id = $1', [fixture.reviewId]);
+  assert.equal(reviewResult.rows[0].status, 'published');
+});
+
 test.after(async () => {
+  for (const fixture of complaintFixtures.reverse()) {
+    await db.query('DELETE FROM colleges WHERE id = $1', [fixture.collegeId]);
+    await db.query('DELETE FROM users WHERE id = ANY($1::int[])', [fixture.userIds]);
+  }
   await db.end();
 });
